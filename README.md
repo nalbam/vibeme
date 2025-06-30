@@ -14,26 +14,35 @@ VibeMe는 AWS Transcribe, Polly, OpenAI GPT를 활용한 실시간 AI 음성 대
 
 ## 🏗️ 시스템 아키텍처
 
-```
-┌─────────────────┐    WebSocket    ┌─────────────────┐
-│   클라이언트     │◄──────────────►│   Express 서버   │
-│  (브라우저)      │                │                │
-└─────────────────┘                └─────────────────┘
-         │                                   │
-         │ WebRTC Audio Stream              │
-         ▼                                   ▼
-┌─────────────────┐                ┌─────────────────┐
-│  Web Audio API  │                │  AWS Services   │
-│  - 음성 캡처     │                │ - Transcribe     │
-│  - 음성 감지     │                │ - Polly         │
-│  - TTS 재생     │                │                │
-└─────────────────┘                └─────────────────┘
-                                            │
-                                            ▼
-                                   ┌─────────────────┐
-                                   │   OpenAI API    │
-                                   │   (GPT-3.5)     │
-                                   └─────────────────┘
+```mermaid
+graph LR
+    subgraph "클라이언트"
+        Browser[웹 브라우저<br/>마이크 + 스피커]
+    end
+
+    subgraph "서버"
+        Server[Node.js 서버<br/>WebSocket]
+    end
+
+    subgraph "AI 서비스"
+        Transcribe[AWS Transcribe<br/>음성→텍스트]
+        OpenAI[OpenAI GPT<br/>대화 생성]
+        Polly[AWS Polly<br/>텍스트→음성]
+    end
+
+    Browser <==> Server
+    Server --> Transcribe
+    Transcribe --> OpenAI
+    OpenAI --> Polly
+    Polly --> Server
+
+    classDef client fill:#e1f5fe
+    classDef server fill:#f3e5f5
+    classDef ai fill:#fff3e0
+
+    class Browser client
+    class Server server
+    class Transcribe,OpenAI,Polly ai
 ```
 
 ## 🚀 빠른 시작
@@ -47,39 +56,39 @@ VibeMe는 AWS Transcribe, Polly, OpenAI GPT를 활용한 실시간 AI 음성 대
 ### 설치 및 실행
 
 1. **저장소 클론**
-   ```bash
-   git clone https://github.com/nalbam/vibeme.git
-   cd vibeme
-   ```
+```bash
+git clone https://github.com/nalbam/vibeme.git
+cd vibeme
+```
 
 2. **의존성 설치**
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+```
 
 3. **환경 변수 설정**
-   ```bash
-   # .env 파일 생성
-   OPENAI_API_KEY=your_openai_api_key
-   AWS_ACCESS_KEY_ID=your_aws_access_key
-   AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-   AWS_REGION=ap-northeast-2
-   PORT=3000
-   ```
+```bash
+# .env 파일 생성
+OPENAI_API_KEY=your_openai_api_key
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_REGION=ap-northeast-2
+PORT=3000
+```
 
 4. **서비스 실행**
-   ```bash
-   # 개발 모드
-   npm run dev
+```bash
+# 개발 모드
+npm run dev
 
-   # 프로덕션 모드
-   npm start
-   ```
+# 프로덕션 모드
+npm start
+```
 
 5. **브라우저에서 접속**
-   ```
-   http://localhost:3000
-   ```
+```
+http://localhost:3000
+```
 
 ## 🎵 오디오 처리 파이프라인
 
