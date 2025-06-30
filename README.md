@@ -108,11 +108,12 @@ Client (WebRTC) → WebSocket → AWS Transcribe → OpenAI GPT → AWS Polly �
 
 #### **음성 활동 감지 (VAD)**
 ```javascript
-// RMS 기반 고급 음성 감지
-- 임계값: 0.02 (엄격한 기준)
-- 연속성 검증: 최소 3프레임 연속 음성
-- 이중 검증: 현재 + 평균 RMS 조건
-- 버퍼 크기: 15 샘플로 안정적 판단
+// RMS 기반 고급 음성 감지 (client.js:14-19)
+- voiceThreshold: 0.01 (기본 음성 임계값)
+- silenceThreshold: 0.005 (무음 임계값)
+- bufferSize: 10 (최근 10개 청크로 음성 활동 판단)
+- minVoiceFrames: 2 (최소 2프레임 연속 음성)
+- 이중 검증: 연속성 + 평균 RMS 조건
 ```
 
 #### **오디오 처리 파이프라인**
@@ -204,74 +205,148 @@ case 'end-call':
 - **Safari**: 부분 지원
 - **HTTPS 필수**: 마이크 권한 및 WebRTC 사용
 
-## 🔧 성능 최적화
+## 🔧 성능 최적화 상세
 
 ### **메모리 관리**
-- 대화 히스토리 20개 메시지로 제한
-- 오디오 파일 사용 후 자동 해제
-- WebSocket 연결 정리 시 모든 리소스 해제
+- 대화 히스토리 20개 메시지 제한 (server.js:343-345)
+- 임시 WAV 파일 자동 삭제 (server.js:234)
+- WebSocket 연결 종료 시 모든 리소스 정리 (server.js:108-117)
+- Base64 오디오 URL 자동 해제 (client.js:351)
 
 ### **지연 시간 최적화**
-- 250ms 주기 오디오 전송으로 빠른 반응성
-- 1초 분량 누적으로 안정적 처리
-- VAD 기반 즉시 인터럽트
+- 클라이언트: 250ms 주기 실시간 전송 (client.js:165)
+- 서버: 16청크(1초) 누적 후 일괄 처리 (server.js:179)
+- VAD 기반 즉시 TTS 인터럽트 (지연 < 100ms)
+- ScriptProcessorNode 4096 버퍼 크기로 저지연 달성
 
-### **오디오 품질**
-- 16kHz 샘플 레이트
-- 16-bit PCM 인코딩
-- Echo Cancellation 및 Noise Suppression 활성화
-
-## 🚨 문제 해결
-
-### **1. 음성 인식 안됨**
-```bash
-# 브라우저 콘솔 확인
-F12 → Console → 오류 메시지 확인
-
-# 마이크 권한 확인
-Settings → Privacy → Microphone → 허용
-
-# AWS 자격 증명 확인
-AWS_ACCESS_KEY_ID 및 AWS_SECRET_ACCESS_KEY 설정
-```
-
-### **2. TTS 재생 안됨**
-```bash
-# AWS Polly 권한 확인
-IAM → Policies → polly:SynthesizeSpeech 권한
-
-# 브라우저 자동재생 정책
-Chrome → Settings → Privacy → Site Settings → Sound
-```
-
-### **3. 연결 끊김**
-```bash
-# WebSocket 연결 상태 확인
-Network → WS → 연결 상태 모니터링
-
-# 방화벽 및 프록시 설정 확인
-Port 3000 접근 허용
-```
-
-## 📊 모니터링 및 디버깅
-
-### **클라이언트 디버깅**
+### **오디오 품질 설정**
 ```javascript
-// 음성 감지 상태 확인
+// client.js:105-113 - 고품질 마이크 설정
+audio: {
+    echoCancellation: true,     // 에코 제거
+    noiseSuppression: true,     // 노이즈 억제  
+    autoGainControl: true,      // 자동 게인 조절
+    sampleRate: 16000,          // 16kHz 샘플 레이트
+    channelCount: 1             // 모노 채널
+}
+```
+
+## 🚨 문제 해결 가이드
+
+### **1. 음성 인식 문제**
+```bash
+# 1단계: 브라우저 콘솔 확인
+F12 → Console → 오류 메시지 분석
+
+# 2단계: 마이크 권한 확인
+Chrome: 주소창 🔒 → 마이크 → 허용
+Firefox: 주소창 🛡️ → 권한 → 마이크 허용
+
+# 3단계: API 키 확인
+# .env 또는 .env.local 파일 확인
+OPENAI_API_KEY=sk-...
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+
+# 4단계: 오디오 품질 디버깅
+# client.js:151 - 음성 감지 디버그 로그 활성화
 console.log('Voice detection debug:', {
-    voiceActivity,
-    consecutiveFrames,
-    threshold,
-    isSpeaking
+    voiceActivity, consecutiveFrames, threshold, isSpeaking
 });
 ```
 
-### **서버 로그**
+### **2. TTS 재생 문제**
+```bash
+# 1단계: AWS Polly 권한 확인
+IAM → 사용자 → 권한 → polly:SynthesizeSpeech 확인
+
+# 2단계: 브라우저 자동재생 정책
+Chrome: chrome://settings/content/sound → 허용
+Firefox: about:preferences#privacy → 자동재생 설정
+
+# 3단계: 네트워크 상태 확인
+# server.js:403 - TTS 생성 시작 로그
+'Generating TTS for: ...'
+# server.js:429 - TTS 전송 완료 로그  
+'TTS audio sent to client'
+```
+
+### **3. WebSocket 연결 문제**
+```bash
+# 1단계: 연결 상태 모니터링
+F12 → Network → WS → 연결 상태 확인
+
+# 2단계: 서버 로그 확인
+# server.js:57 - 새 연결 로그
+'New connection: [sessionId]'
+# server.js:109 - 연결 종료 로그
+'Connection closed: [sessionId]'
+
+# 3단계: 포트 및 방화벽 확인
+netstat -an | grep 3000  # 포트 사용 확인
+
+# 4단계: 자동 재연결 기능
+# client.js:63 - 3초 후 자동 재연결
+setTimeout(() => this.setupWebSocket(), 3000);
+```
+
+## 📊 실시간 모니터링 및 디버깅
+
+### **클라이언트 디버깅 (client.js)**
 ```javascript
-// 오디오 처리 상태
-"Processing audio chunks, total size: X"
-"Audio RMS: X.XX"
-"Generating TTS for: ..."
+// 음성 감지 상태 (client.js:151-157)
+console.log('Voice detection debug:', {
+    voiceActivity,           // 현재 음성 활동 여부
+    consecutiveFrames,       // 연속 음성 프레임 수
+    threshold: 0.01,         // 음성 임계값
+    isSpeaking              // 사용자 발화 상태
+});
+
+// TTS 인터럽트 로그 (client.js:144, 365)
+'🎤 User started speaking - TTS interrupted'
+'🛑 TTS interrupted: user speaking'
+
+// 오디오 재생 상태 (client.js:347, 353)
+'🔊 AI response audio loaded, playing...'
+'🎵 AI response playback finished'
+```
+
+### **서버 로그 (server.js)**
+```javascript
+// 연결 관리 (server.js:57, 109)
+'New connection: [sessionId]'           // 새 연결 생성
+'Connection closed: [sessionId]'        // 연결 종료
+
+// 오디오 처리 파이프라인 (server.js:196, 269, 403, 429)
+'Processing audio chunks, total size: X' // 오디오 청크 처리 시작
+'Audio RMS: X.XX'                       // RMS 에너지 레벨
+'Generating TTS for: [text]...'         // TTS 생성 시작
+'TTS audio sent to client'              // TTS 전송 완료
+
+// 대화 처리 (server.js:329, 325)
+'Handling transcription: [text]'        // 전사 결과 처리
+'Call ended, skipping transcription'    // 종료된 호출 무시
+
+// 에러 처리 (server.js:104, 163, 208, 359, 433)
+'WebSocket message error: [error]'      // 메시지 처리 오류
+'Transcribe stream error: [error]'      // 전사 스트림 오류
+'Audio processing error: [error]'       // 오디오 처리 오류
+'Transcription handling error: [error]' // 전사 처리 오류
+'TTS error: [error]'                   // TTS 생성 오류
+```
+
+### **성능 메트릭**
+```javascript
+// 지연 시간 측정
+- 음성 → 전사: ~1-2초 (OpenAI Whisper)
+- 전사 → AI 응답: ~0.5-1초 (GPT-3.5-turbo)
+- AI 응답 → TTS: ~1-2초 (AWS Polly)
+- TTS 인터럽트: ~100ms (실시간 VAD)
+
+// 메모리 사용량
+- 대화 히스토리: 최대 20개 메시지
+- 오디오 버퍼: 16청크(1초) 누적
+- 임시 파일: 즉시 삭제
 ```
 
 ## 🤝 기여하기
