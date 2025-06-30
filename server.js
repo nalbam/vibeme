@@ -72,7 +72,7 @@ wss.on('connection', (ws) => {
             
             switch (data.type) {
                 case 'start-call':
-                    await startTranscribeStream(sessionId);
+                    await initializeTranscribeProcessing(sessionId);
                     ws.send(JSON.stringify({
                         type: 'call-ready',
                         sessionId: sessionId
@@ -123,13 +123,24 @@ async function startTranscribeStream(sessionId) {
     if (!connection) return;
 
     try {
-        console.log(`Starting Transcribe stream for session: ${sessionId}`);
+        console.log(`Starting AWS Transcribe stream for session: ${sessionId}`);
         
-        // 오디오 스트림 생성
-        const audioStream = async function* () {
-            while (connection.audioChunks.length > 0) {
-                const chunk = connection.audioChunks.shift();
-                yield { AudioEvent: { AudioChunk: chunk } };
+        // 오디오 스트림 생성 함수
+        const createAudioStream = async function* () {
+            let streamActive = true;
+            
+            // 연결이 활성 상태이고 처리 중일 때만 스트림 유지
+            while (streamActive && connection.isProcessing) {
+                if (connection.audioChunks.length > 0) {
+                    const chunk = connection.audioChunks.shift();
+                    yield { AudioEvent: { AudioChunk: chunk } };
+                } else {
+                    // 새 오디오 데이터를 기다림 (100ms 대기)
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                // 연결 상태 재확인
+                streamActive = activeConnections.has(sessionId) && connection.isProcessing;
             }
         };
 
@@ -137,21 +148,30 @@ async function startTranscribeStream(sessionId) {
             LanguageCode: 'ko-KR',
             MediaEncoding: 'pcm',
             MediaSampleRateHertz: 16000,
-            AudioStream: audioStream()
+            AudioStream: createAudioStream()
         });
 
         const response = await transcribeClient.send(command);
+        connection.transcribeStream = response;
+        
+        console.log('AWS Transcribe stream started successfully');
         
         // 실시간 전사 결과 처리
         if (response.TranscriptResultStream) {
             for await (const event of response.TranscriptResultStream) {
+                // 연결이 종료되었으면 스트림 처리 중단
+                if (!connection.isProcessing) {
+                    console.log('Stream processing stopped for session:', sessionId);
+                    break;
+                }
+                
                 if (event.TranscriptEvent) {
                     const results = event.TranscriptEvent.Transcript.Results;
                     if (results && results.length > 0) {
                         const result = results[0];
                         if (!result.IsPartial && result.Alternatives && result.Alternatives.length > 0) {
                             const transcript = result.Alternatives[0].Transcript;
-                            console.log('Transcription result:', transcript);
+                            console.log('AWS Transcribe result:', transcript);
                             await handleTranscription(sessionId, transcript);
                         }
                     }
@@ -160,87 +180,57 @@ async function startTranscribeStream(sessionId) {
         }
         
     } catch (error) {
-        console.error('Transcribe stream error:', error);
+        console.error('AWS Transcribe stream error:', error);
+        // 에러 발생 시 연결 정리
+        if (connection) {
+            connection.transcribeStream = null;
+        }
     }
 }
 
-// 오디오 스트림 처리
+// 오디오 스트림 처리 (AWS Transcribe 스트리밍용)
 async function handleAudioStream(sessionId, audioData) {
     const connection = activeConnections.get(sessionId);
-    if (!connection || !audioData) return;
+    if (!connection || !audioData || !connection.isProcessing) return;
 
     // PCM 데이터를 Buffer로 변환
     const audioBuffer = Buffer.from(new Int16Array(audioData).buffer);
     
-    // 오디오 청크를 큐에 추가
+    // 오디오 데이터 유효성 검증 (간단한 검증)
+    if (audioBuffer.length < 1000) { // 너무 작은 청크는 무시
+        return;
+    }
+    
+    // 오디오 청크를 실시간 스트림용 큐에 추가
     connection.audioChunks.push(audioBuffer);
     
-    // 더 많은 데이터가 쌓였을 때만 처리 (1초 분량으로 증가)
-    if (connection.audioChunks.length >= 16) { // 16kHz * 1초 / 1024 samples per chunk
-        await processAudioChunks(sessionId);
-    }
+    // AWS Transcribe 스트리밍은 실시간으로 처리되므로 별도 처리 불필요
+    // 스트림이 자동으로 큐에서 데이터를 가져가서 처리함
+    
+    console.log(`Audio chunk added to stream queue: ${audioBuffer.length} bytes`);
 }
 
-// 오디오 청크 일괄 처리
-async function processAudioChunks(sessionId) {
+// AWS Transcribe 스트리밍 처리 시작
+async function initializeTranscribeProcessing(sessionId) {
     const connection = activeConnections.get(sessionId);
-    if (!connection || connection.isProcessing) return;
+    if (!connection) return;
 
+    // 스트리밍 처리 시작
     connection.isProcessing = true;
     
     try {
-        // 청크들을 결합
-        const combinedAudio = Buffer.concat(connection.audioChunks);
-        connection.audioChunks = [];
+        console.log('Initializing AWS Transcribe streaming for session:', sessionId);
         
-        console.log('Processing audio chunks, total size:', combinedAudio.length);
-        
-        // 오디오 데이터 유효성 검증
-        if (!isValidAudioData(combinedAudio)) {
-            console.log('Invalid audio data detected, skipping processing');
-            return;
-        }
-        
-        // AWS Transcribe로 전송 (실제 구현에서는 스트리밍 방식 사용)
-        await processWithTranscribe(sessionId, combinedAudio);
+        // AWS Transcribe 스트림 시작
+        await startTranscribeStream(sessionId);
         
     } catch (error) {
-        console.error('Audio processing error:', error);
-    } finally {
+        console.error('Transcribe initialization error:', error);
         connection.isProcessing = false;
     }
 }
 
-// AWS Transcribe로 음성 인식 (임시 구현 - 실제로는 스트리밍 사용)
-async function processWithTranscribe(sessionId, audioBuffer) {
-    const connection = activeConnections.get(sessionId);
-    if (!connection) return;
-
-    try {
-        // 임시: OpenAI Whisper 사용 (AWS Transcribe 스트리밍 완전 구현까지)
-        const fs = require('fs');
-        const tempFilePath = path.join(__dirname, `temp_${sessionId}_${Date.now()}.wav`);
-        
-        // PCM to WAV 변환
-        const wavBuffer = createWavBuffer(audioBuffer);
-        fs.writeFileSync(tempFilePath, wavBuffer);
-        
-        const transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(tempFilePath),
-            model: 'whisper-1',
-            language: 'ko'
-        });
-        
-        fs.unlinkSync(tempFilePath);
-        
-        if (transcription.text.trim()) {
-            await handleTranscription(sessionId, transcription.text);
-        }
-        
-    } catch (error) {
-        console.error('Transcribe processing error:', error);
-    }
-}
+// OpenAI Whisper 관련 코드 제거됨 - AWS Transcribe 스트리밍으로 대체
 
 // 오디오 데이터 유효성 검증
 function isValidAudioData(audioBuffer) {
@@ -279,38 +269,7 @@ function isValidAudioData(audioBuffer) {
     return true;
 }
 
-// PCM을 WAV로 변환
-function createWavBuffer(pcmBuffer) {
-    const sampleRate = 16000;
-    const numChannels = 1;
-    const bitsPerSample = 16;
-    
-    const dataLength = pcmBuffer.length;
-    const headerLength = 44;
-    const totalLength = headerLength + dataLength;
-    
-    const wavBuffer = Buffer.alloc(totalLength);
-    
-    // WAV 헤더
-    wavBuffer.write('RIFF', 0);
-    wavBuffer.writeUInt32LE(totalLength - 8, 4);
-    wavBuffer.write('WAVE', 8);
-    wavBuffer.write('fmt ', 12);
-    wavBuffer.writeUInt32LE(16, 16);
-    wavBuffer.writeUInt16LE(1, 20);
-    wavBuffer.writeUInt16LE(numChannels, 22);
-    wavBuffer.writeUInt32LE(sampleRate, 24);
-    wavBuffer.writeUInt32LE(sampleRate * numChannels * bitsPerSample / 8, 28);
-    wavBuffer.writeUInt16LE(numChannels * bitsPerSample / 8, 32);
-    wavBuffer.writeUInt16LE(bitsPerSample, 34);
-    wavBuffer.write('data', 36);
-    wavBuffer.writeUInt32LE(dataLength, 40);
-    
-    // PCM 데이터 복사
-    pcmBuffer.copy(wavBuffer, headerLength);
-    
-    return wavBuffer;
-}
+// WAV 변환 함수 제거됨 - AWS Transcribe에서 PCM 직접 처리
 
 // 전사 결과 처리
 async function handleTranscription(sessionId, transcript) {

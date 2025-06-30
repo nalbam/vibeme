@@ -1,177 +1,175 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides technical guidance for Claude Code when working with this codebase.
 
-**Project**: VibeMe - Real-time AI voice conversation service  
-**Tech Stack**: Node.js + WebRTC + WebSocket + OpenAI + AWS  
-**Architecture**: Client-server real-time audio streaming with AI processing  
-**Status**: Production-ready with ongoing AWS Transcribe integration
+## Development Commands
 
-## Common Development Commands
-
-### Project Management
+### Project Setup
 - `npm install` - Install dependencies
-- `npm start` - Run production server
-- `npm run dev` - Run development server with nodemon (recommended for development)
+- `npm run dev` - Development server with auto-restart
+- `npm start` - Production server
 - `npm test` - Run Jest tests
 
-### Environment Setup
-- Create `.env` or `.env.local` file with required API keys:
-  - `OPENAI_API_KEY` - OpenAI API key for GPT conversation generation
-  - `AWS_ACCESS_KEY_ID` - AWS access key for Transcribe and Polly services
-  - `AWS_SECRET_ACCESS_KEY` - AWS secret key
-  - `AWS_REGION` - AWS region (default: ap-northeast-2)
-  - `PORT` - Server port (default: 3000)
-  - `NODE_ENV` - Environment (development/production)
-
-## Architecture Overview
-
-### System Design
-This is a real-time AI voice conversation service that enables natural phone-like conversations between users and AI. The architecture follows a WebRTC + WebSocket pattern with AWS AI services integration.
-
-**Data Flow:**
-```
-Client (WebRTC) → WebSocket → AWS Transcribe → OpenAI GPT → AWS Polly → Client
+### Environment Configuration
+Required `.env` or `.env.local` file:
+```bash
+OPENAI_API_KEY=sk-proj-...
+AWS_ACCESS_KEY_ID=AKIA...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=ap-northeast-2
+PORT=3000
+NODE_ENV=development
 ```
 
-### Core Components
+### Key Dependencies
+- `@aws-sdk/client-polly` - TTS service
+- `@aws-sdk/client-transcribe-streaming` - STT streaming
+- `openai` - GPT conversation generation
+- `ws` - WebSocket server
+- `express` - Web server
+- `dotenv` - Environment variables
 
-**Backend (`server.js`)**
-- Express.js web server with WebSocket support
-- Real-time audio processing and streaming
-- AWS Transcribe integration for speech-to-text
-- OpenAI GPT-3.5-turbo for conversation generation
-- AWS Polly Neural for text-to-speech synthesis
-- Connection state management with active session tracking
+## Code Architecture
 
-**Frontend (`public/client.js`, `public/index.html`)**
-- WebRTC-based real-time audio capture and streaming
-- Voice Activity Detection (VAD) using RMS-based algorithm
-- Smart interrupt system that stops AI speech when user starts talking
-- WebSocket client for bidirectional communication
-- Phone-call-like UI with start/stop controls
+### Core Files
+**server.js (457 lines)**
+- Lines 55-118: WebSocket connection management
+- Lines 120-165: AWS Transcribe streaming implementation
+- Lines 167-182: Real-time audio streaming handler
+- Lines 184-199: Transcribe processing initialization
+- Lines 245-280: Audio validation logic
+- Lines 314-361: Transcription and conversation handling
+- Lines 388-435: TTS generation with AWS Polly
 
-### Key Technical Features
+**client.js (433 lines)**
+- Lines 1-99: VibeMeWebRTC class and WebSocket handling
+- Lines 100-193: WebRTC audio capture and call management
+- Lines 268-302: Voice Activity Detection algorithm
+- Lines 315-377: TTS playback and interrupt handling
+- Lines 378-427: UI management and conversation logging
 
-**Real-time Audio Processing:**
-- 250ms audio chunk transmission for low latency
-- 16kHz sample rate, 16-bit PCM encoding
-- RMS-based voice activity detection with smart filtering
-- Automatic background noise filtering
+### Critical Implementation Details
 
-**Smart Conversation Flow:**
-- Immediate TTS interruption when user starts speaking
-- Conversation history management (limited to 20 messages)
-- Session-based state management
-- Graceful connection cleanup and resource management
-
-**Performance Optimizations:**
-- Audio validation to prevent processing invalid/silent audio
-- Memory management with automatic resource cleanup
-- WebSocket connection pooling and state tracking
-- Threshold-based voice detection to minimize false positives
-
-## Development Notes
-
-### Audio Processing Pipeline
-The system uses a sophisticated audio processing pipeline:
-1. Client captures audio via WebRTC ScriptProcessorNode (4096 buffer size)
-2. Audio is converted to 16-bit PCM and sent via WebSocket every 250ms
-3. Server accumulates chunks until 1-second worth of audio is collected
-4. Audio validation checks RMS energy levels before processing
-5. Valid audio is sent to AWS Transcribe for real-time speech recognition
-
-### Voice Activity Detection
-The VAD system uses multiple validation layers (client.js:14-19):
-- Primary threshold: 0.01 RMS energy (voiceThreshold)
-- Secondary threshold: 0.005 for silence detection (silenceThreshold)
-- Consecutive frame requirement: minimum 2 frames (minVoiceFrames)
-- Buffer-based smoothing: 10-sample buffer for stability (bufferSize)
-
-### Session Management
-Each WebSocket connection maintains:
-- `isProcessing` flag to control audio processing
-- `audioChunks` array for buffering incoming audio
-- Conversation history with automatic pruning
-- Session-specific configuration and state
-
-### Error Handling
-- Graceful fallback for audio processing failures
-- WebSocket reconnection capability
-- AWS service error handling with appropriate user feedback
-- Resource cleanup on connection termination
-
-## Required AWS Permissions
-
-The application requires the following AWS IAM permissions:
-```json
-{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "transcribe:StartStreamTranscription",
-                "polly:SynthesizeSpeech"
-            ],
-            "Resource": "*"
-        }
-    ]
-}
-```
-
-## Browser Compatibility and Requirements
-
-### Supported Browsers:
-- **Chrome**: Full support (recommended) - best WebRTC performance
-- **Firefox**: WebRTC supported - good compatibility
-- **Safari**: Partial support - limited WebRTC features
-- **Edge**: WebRTC supported - good compatibility
-
-### Technical Requirements:
-- **HTTPS mandatory**: Microphone access and WebRTC require secure context
-- **Microphone permission**: User must grant microphone access
-- **JavaScript enabled**: Required for WebSocket and audio processing
-- **Web Audio API**: Required for real-time audio processing
-- **WebSocket support**: Required for real-time communication
-
-### Audio Configuration:
+**Voice Activity Detection (client.js:14-19)**
 ```javascript
-// Optimal microphone settings (client.js:105-113)
-audio: {
-    echoCancellation: true,     // Reduces echo feedback
-    noiseSuppression: true,     // Minimizes background noise
-    autoGainControl: true,      // Normalizes audio levels
-    sampleRate: 16000,          // 16kHz for optimal quality/bandwidth
-    channelCount: 1             // Mono channel for efficiency
-}
+voiceThreshold: 0.01          // Primary detection threshold
+silenceThreshold: 0.005       // Silence detection threshold
+bufferSize: 10               // RMS averaging buffer
+minVoiceFrames: 2            // Minimum consecutive frames
 ```
 
-### Performance Considerations:
-- Minimum stable internet connection for real-time audio streaming
-- Adequate CPU for real-time audio processing (ScriptProcessorNode)
-- Sufficient memory for audio buffering and conversation history
-- Low-latency audio hardware recommended for best experience
+**Audio Processing Pipeline**
+- Client: 250ms chunk transmission (client.js:165)
+- Server: Real-time streaming to AWS Transcribe
+- Audio format: 16kHz, 16-bit PCM, mono
+- No temporary files - direct streaming
 
-## Current vs. Planned Implementation
+**Session Management (server.js:59-65)**
+```javascript
+const connection = {
+    ws: ws,                    // WebSocket instance
+    transcribeStream: null,    // AWS Transcribe stream
+    conversationHistory: [],   // Chat history (max 20)
+    isProcessing: false,       // Processing state flag
+    audioChunks: []           // Audio buffer queue
+};
+```
 
-### Current State (Working Implementation):
-- ✅ WebRTC audio capture with advanced VAD
-- ✅ WebSocket real-time communication
-- ✅ OpenAI Whisper for speech-to-text (via file upload)
-- ✅ OpenAI GPT-3.5-turbo for conversation
-- ✅ AWS Polly Neural TTS (Seoyeon voice)
-- ✅ Smart TTS interruption system
-- ✅ Session management and cleanup
+## Development Guidelines
 
-### In Progress (AWS Transcribe Integration):
-- 🔄 AWS Transcribe Streaming implementation (server.js:120-165)
-- 🔄 Real-time streaming STT without temporary files
-- 🔄 Improved latency through streaming processing
+### Audio Processing
+- **Current threshold**: 0.01 RMS energy (server.js:272)
+- **Minimum length**: 0.5 seconds for validation
+- **Chunk size**: 1000+ bytes minimum for processing
+- **Stream active**: Check `connection.isProcessing` flag
 
-### Architecture Evolution:
-- **Phase 1** (Current): Hybrid OpenAI + AWS implementation
-- **Phase 2** (Target): Full AWS AI services integration
-- **Phase 3** (Future): Advanced conversation context and memory
+### Voice Detection Tuning
+- **Quiet environment**: Lower threshold to 0.007-0.008
+- **Noisy environment**: Raise threshold to 0.012-0.015
+- **False positives**: Increase `minVoiceFrames` to 3
+- **Delayed detection**: Decrease `minVoiceFrames` to 1
 
-This codebase represents a production-ready real-time voice conversation system with sophisticated audio processing, smart interruption handling, and robust session management.
+### Error Handling Patterns
+- WebSocket errors: Check JSON parsing (server.js:103-105)
+- Audio processing: Verify stream state (server.js:167-182)
+- AWS Transcribe: Monitor stream lifecycle (server.js:120-165)
+- TTS errors: Check Polly permissions (server.js:432-434)
+
+### Memory Management
+- Conversation history: Auto-pruned at 20 messages (server.js:343-345)
+- Audio URLs: Auto-revoked to prevent leaks (client.js:351)
+- Connection cleanup: Complete resource cleanup (server.js:108-117)
+- Stream termination: Proper AWS stream closure
+
+### Performance Optimization
+- **Client transmission**: 250ms intervals for responsiveness
+- **VAD response**: ~82ms (2 frames × 41ms)
+- **ScriptProcessor**: 4096 buffer for low latency
+- **Stream processing**: Real-time without accumulation
+
+## Debugging and Troubleshooting
+
+### Key Debug Points
+**Audio Validation Issues**
+- Check RMS calculation: server.js:269
+- Verify buffer length: minimum 1000 bytes
+- Monitor processing state: `connection.isProcessing`
+
+**Voice Detection Problems**
+- Debug output: 1% probability logging (client.js:151-157)
+- Check consecutive frames counter
+- Verify threshold settings vs environment noise
+
+**Stream Management Issues**
+- Monitor connection lifecycle: server.js:57, 109
+- Check AWS Transcribe stream state
+- Verify proper cleanup on disconnect
+
+### Common Error Patterns
+```javascript
+// Stream processing errors
+'AWS Transcribe stream error: [error]'        // server.js:163
+'Stream processing stopped for session:'      // server.js:139
+'Audio chunk added to stream queue:'          // server.js:182
+
+// Connection management
+'New connection: [sessionId]'                 // server.js:57
+'Connection closed: [sessionId]'              // server.js:109
+
+// TTS processing
+'Generating TTS for: [text]...'               // server.js:403
+'TTS audio sent to client'                    // server.js:429
+```
+
+### Testing Approach
+- Use browser dev tools for WebRTC debugging
+- Monitor WebSocket message flow
+- Test VAD in different noise environments
+- Verify AWS credentials and permissions
+- Check stream termination and cleanup
+
+## Code Modification Best Practices
+
+### When Changing VAD Settings
+1. Test in quiet and noisy environments
+2. Monitor false positive/negative rates
+3. Adjust thresholds incrementally (±0.001-0.002)
+4. Update both client and server validation if needed
+
+### When Modifying Audio Processing
+1. Ensure proper stream state management
+2. Maintain real-time processing requirements
+3. Verify memory cleanup on all exit paths
+4. Test connection drop scenarios
+
+### When Working with AWS Services
+1. Verify IAM permissions for Transcribe and Polly
+2. Monitor AWS service quotas and limits
+3. Handle network interruptions gracefully
+4. Implement proper retry mechanisms
+
+### Session State Management
+1. Always check connection existence before processing
+2. Use atomic operations for state changes
+3. Implement proper cleanup in all error paths
+4. Verify thread safety for concurrent connections
