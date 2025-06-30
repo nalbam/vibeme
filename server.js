@@ -1,148 +1,167 @@
 require('dotenv').config();
 require('dotenv').config({ path: '.env.local' });
+
 const express = require('express');
-const WebSocket = require('ws');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
-
-const OpenAIService = require('./services/openai');
-const PollyService = require('./services/polly');
+const fs = require('fs');
+const multer = require('multer');
+const OpenAI = require('openai');
+const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
 
-// Initialize services
-let openaiService;
-let pollyService;
+// OpenAI 설정
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
 
-try {
-  openaiService = new OpenAIService();
-  console.log('✅ OpenAI service initialized');
-} catch (error) {
-  console.error('❌ Failed to initialize OpenAI service:', error.message);
-}
+// AWS Polly 설정
+const polly = new PollyClient({
+    region: process.env.AWS_REGION || 'ap-northeast-2',
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    },
+});
 
-try {
-  pollyService = new PollyService();
-  console.log('✅ AWS Polly service initialized');
-} catch (error) {
-  console.error('❌ Failed to initialize Polly service:', error.message);
-}
+// Multer 설정
+const upload = multer({
+    limits: { fileSize: 25 * 1024 * 1024 }
+});
 
-// Store conversation history for each connection
-const conversationHistory = new Map();
-
-// Middleware
+// 미들웨어
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
-// Basic route
+// 라우트
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok' });
 });
 
-// WebSocket connection handling
-wss.on('connection', (ws) => {
-  console.log('New WebSocket connection established');
-  
-  // Generate unique session ID for this connection
-  const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-  conversationHistory.set(sessionId, []);
-  
-  ws.on('message', async (message) => {
+// 음성 인식 API
+app.post('/api/speech-to-text', upload.single('audio'), async (req, res) => {
     try {
-      const data = JSON.parse(message);
-      console.log('Received message:', data);
-      
-      if (data.type === 'message' && data.text) {
-        // Get conversation history for this session
-        const history = conversationHistory.get(sessionId) || [];
-        
-        if (openaiService) {
-          // Get AI response
-          const result = await openaiService.generateResponse(data.text, history);
-          
-          // Update conversation history
-          history.push({ role: 'user', content: data.text });
-          history.push({ role: 'assistant', content: result.response });
-          
-          // Keep only last 20 messages to prevent memory issues
-          if (history.length > 20) {
-            history.splice(0, history.length - 20);
-          }
-          
-          conversationHistory.set(sessionId, history);
-          
-          // Send text response first
-          ws.send(JSON.stringify({
-            type: 'response',
-            text: result.response,
-            timestamp: Date.now(),
-            usage: result.usage
-          }));
-          
-          // Generate TTS audio if Polly service is available
-          if (pollyService) {
-            try {
-              const ttsResult = await pollyService.synthesizeSpeechToBase64(result.response);
-              
-              if (ttsResult.success) {
-                ws.send(JSON.stringify({
-                  type: 'audio',
-                  audioBase64: ttsResult.audioBase64,
-                  contentType: ttsResult.contentType,
-                  text: result.response,
-                  timestamp: Date.now()
-                }));
-              } else {
-                console.error('TTS generation failed:', ttsResult.error);
-              }
-            } catch (ttsError) {
-              console.error('TTS error:', ttsError);
-            }
-          }
-          
-        } else {
-          // Fallback if OpenAI service is not available
-          ws.send(JSON.stringify({
-            type: 'response',
-            text: '죄송합니다. AI 서비스가 현재 사용할 수 없습니다.',
-            timestamp: Date.now()
-          }));
+        if (!req.file) {
+            return res.status(400).json({ error: 'No audio file' });
         }
-      }
-      
+
+        const tempFilePath = path.join(__dirname, `temp_${Date.now()}.webm`);
+        fs.writeFileSync(tempFilePath, req.file.buffer);
+
+        try {
+            const transcription = await openai.audio.transcriptions.create({
+                file: fs.createReadStream(tempFilePath),
+                model: 'whisper-1',
+                language: 'ko'
+            });
+
+            res.json({ 
+                success: true, 
+                text: transcription.text 
+            });
+
+        } finally {
+            if (fs.existsSync(tempFilePath)) {
+                fs.unlinkSync(tempFilePath);
+            }
+        }
+
     } catch (error) {
-      console.error('Error processing message:', error);
-      ws.send(JSON.stringify({
-        type: 'error',
-        message: 'Failed to process message'
-      }));
+        console.error('Speech-to-text error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to process audio' 
+        });
     }
-  });
-  
-  ws.on('close', () => {
-    console.log('WebSocket connection closed');
-    // Clean up conversation history
-    conversationHistory.delete(sessionId);
-  });
-  
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
+});
+
+// AI 챗 API
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { message } = req.body;
+        
+        if (!message) {
+            return res.status(400).json({ error: 'No message provided' });
+        }
+
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-3.5-turbo',
+            messages: [
+                { role: 'system', content: '당신은 친근한 AI 어시스턴트입니다. 한국어로 간결하게 답변하세요.' },
+                { role: 'user', content: message }
+            ],
+            max_tokens: 150
+        });
+
+        const response = completion.choices[0].message.content;
+
+        res.json({
+            success: true,
+            response: response
+        });
+
+    } catch (error) {
+        console.error('Chat error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to generate response' 
+        });
+    }
+});
+
+// TTS API
+app.post('/api/text-to-speech', async (req, res) => {
+    try {
+        const { text } = req.body;
+        
+        if (!text) {
+            return res.status(400).json({ error: 'No text provided' });
+        }
+
+        const command = new SynthesizeSpeechCommand({
+            Text: text,
+            OutputFormat: 'mp3',
+            VoiceId: 'Seoyeon',
+            Engine: 'neural'
+        });
+
+        const ttsResult = await polly.send(command);
+
+        if (ttsResult.AudioStream) {
+            const chunks = [];
+            for await (const chunk of ttsResult.AudioStream) {
+                chunks.push(chunk);
+            }
+            const audioBuffer = Buffer.concat(chunks);
+            const audioBase64 = audioBuffer.toString('base64');
+            
+            res.json({
+                success: true,
+                audioBase64: audioBase64,
+                contentType: 'audio/mp3'
+            });
+        } else {
+            throw new Error('No audio stream received');
+        }
+
+    } catch (error) {
+        console.error('TTS error:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to generate speech' 
+        });
+    }
 });
 
 const PORT = process.env.PORT || 3000;
-
 server.listen(PORT, () => {
-  console.log(`🚀 VibeMe server running on port ${PORT}`);
-  console.log(`📱 Open http://localhost:${PORT} to access the demo`);
+    console.log(`VibeMe server running on port ${PORT}`);
 });

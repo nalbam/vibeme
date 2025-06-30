@@ -58,6 +58,7 @@
             margin-bottom: 1rem;
             padding: 0.8rem;
             border-radius: 10px;
+            position: relative;
         }
         
         .message.user {
@@ -70,6 +71,24 @@
             background: #e8f2ff;
             color: #333;
             margin-right: 20%;
+        }
+        
+        .message-content {
+            margin-bottom: 0.3rem;
+        }
+        
+        .message-time {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            text-align: right;
+        }
+        
+        .message.user .message-time {
+            color: rgba(255, 255, 255, 0.8);
+        }
+        
+        .message.bot .message-time {
+            color: rgba(0, 0, 0, 0.5);
         }
         
         .input-container {
@@ -105,6 +124,27 @@
             cursor: not-allowed;
         }
         
+        #voiceButton {
+            padding: 1rem;
+            background: #28a745;
+            font-size: 1.2rem;
+        }
+        
+        #voiceButton:hover {
+            background: #218838;
+        }
+        
+        #voiceButton.recording {
+            background: #dc3545;
+            animation: pulse 1s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
         .status {
             text-align: center;
             margin-top: 1rem;
@@ -129,12 +169,16 @@
         
         <div class="chat-container" id="chatContainer">
             <div class="message bot">
-                안녕하세요! 저는 VibeMe AI 어시스턴트입니다. 무엇을 도와드릴까요?
+                <div class="message-content">
+                    안녕하세요! 저는 VibeMe AI 어시스턴트입니다. 무엇을 도와드릴까요?
+                </div>
+                <div class="message-time" id="welcomeTime"></div>
             </div>
         </div>
         
         <div class="input-container">
-            <input type="text" id="messageInput" placeholder="메시지를 입력하세요..." />
+            <input type="text" id="messageInput" placeholder="메시지를 입력하거나 음성 버튼을 눌러 말하세요..." />
+            <button id="voiceButton">🎤</button>
             <button id="sendButton">전송</button>
             <button id="stopAudioButton" style="display: none;">🔇 음성 정지</button>
         </div>
