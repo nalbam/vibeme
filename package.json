@@ -3,6 +3,14 @@
   "version": "1.0.0",
   "description": "AI Voice Chatbot Demo Service",
   "main": "server.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nalbam/vibeme.git"
+  },
+  "homepage": "https://github.com/nalbam/vibeme#readme",
+  "bugs": {
+    "url": "https://github.com/nalbam/vibeme/issues"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",

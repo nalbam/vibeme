@@ -14,7 +14,7 @@
 ### 1. 저장소 복제 및 의존성 설치
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/nalbam/vibeme.git
 cd vibeme
 npm install
 ```
