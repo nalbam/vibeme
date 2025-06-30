@@ -11,7 +11,7 @@ class VibeMeWebRTC {
         this.sessionId = null;
 
         // 음성 활동 감지 설정
-        this.voiceThreshold = 0.01;
+        this.voiceThreshold = 0.02;
         this.silenceThreshold = 0.005;
         this.voiceDetectionBuffer = [];
         this.bufferSize = 10; // 최근 10개 청크로 음성 활동 판단

@@ -8,9 +8,9 @@ const cors = require('cors');
 const path = require('path');
 const OpenAI = require('openai');
 const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
-const { 
-    TranscribeStreamingClient, 
-    StartStreamTranscriptionCommand 
+const {
+    TranscribeStreamingClient,
+    StartStreamTranscriptionCommand
 } = require('@aws-sdk/client-transcribe-streaming');
 
 const app = express();
@@ -55,7 +55,7 @@ app.get('/health', (req, res) => {
 wss.on('connection', (ws) => {
     const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     console.log(`New connection: ${sessionId}`);
-    
+
     const connection = {
         ws: ws,
         transcribeStream: null,
@@ -63,13 +63,13 @@ wss.on('connection', (ws) => {
         isProcessing: false,
         audioChunks: []
     };
-    
+
     activeConnections.set(sessionId, connection);
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message.toString());
-            
+
             switch (data.type) {
                 case 'start-call':
                     await initializeTranscribeProcessing(sessionId);
@@ -78,16 +78,16 @@ wss.on('connection', (ws) => {
                         sessionId: sessionId
                     }));
                     break;
-                    
+
                 case 'audio-stream':
                     await handleAudioStream(sessionId, data.audioData);
                     break;
-                    
+
                 case 'stop-tts':
                     // TTS 중단 신호 처리
                     console.log('TTS stop signal received');
                     break;
-                    
+
                 case 'end-call':
                     await endTranscribeStream(sessionId);
                     // 진행 중인 처리 중단
@@ -99,7 +99,7 @@ wss.on('connection', (ws) => {
                     }
                     break;
             }
-            
+
         } catch (error) {
             console.error('WebSocket message error:', error);
         }
@@ -125,11 +125,11 @@ async function startTranscribeStream(sessionId) {
 
     try {
         console.log(`Starting AWS Transcribe stream for session: ${sessionId}`);
-        
+
         // 오디오 스트림 생성 함수
         const createAudioStream = async function* () {
             let streamActive = true;
-            
+
             // 연결이 활성 상태이고 처리 중일 때만 스트림 유지
             while (streamActive && connection.isProcessing) {
                 if (connection.audioChunks.length > 0) {
@@ -139,7 +139,7 @@ async function startTranscribeStream(sessionId) {
                     // 새 오디오 데이터를 기다림 (100ms 대기)
                     await new Promise(resolve => setTimeout(resolve, 100));
                 }
-                
+
                 // 연결 상태 재확인
                 streamActive = activeConnections.has(sessionId) && connection.isProcessing;
             }
@@ -154,9 +154,9 @@ async function startTranscribeStream(sessionId) {
 
         const response = await transcribeClient.send(command);
         connection.transcribeStream = response;
-        
+
         console.log('AWS Transcribe stream started successfully');
-        
+
         // 실시간 전사 결과 처리
         if (response.TranscriptResultStream) {
             try {
@@ -166,7 +166,7 @@ async function startTranscribeStream(sessionId) {
                         console.log('Stream processing stopped for session:', sessionId);
                         break;
                     }
-                    
+
                     if (event.TranscriptEvent) {
                         const results = event.TranscriptEvent.Transcript.Results;
                         if (results && results.length > 0) {
@@ -183,7 +183,7 @@ async function startTranscribeStream(sessionId) {
                 console.log('Transcribe stream closed or interrupted:', streamError.message);
             }
         }
-        
+
     } catch (error) {
         console.error('AWS Transcribe stream error:', error);
         // 에러 발생 시 연결 정리
@@ -200,18 +200,18 @@ async function handleAudioStream(sessionId, audioData) {
 
     // PCM 데이터를 Buffer로 변환
     const audioBuffer = Buffer.from(new Int16Array(audioData).buffer);
-    
+
     // 오디오 데이터 유효성 검증 (간단한 검증)
     if (audioBuffer.length < 1000) { // 너무 작은 청크는 무시
         return;
     }
-    
+
     // 오디오 청크를 실시간 스트림용 큐에 추가
     connection.audioChunks.push(audioBuffer);
-    
+
     // AWS Transcribe 스트리밍은 실시간으로 처리되므로 별도 처리 불필요
     // 스트림이 자동으로 큐에서 데이터를 가져가서 처리함
-    
+
     console.log(`Audio chunk added to stream queue: ${audioBuffer.length} bytes`);
 }
 
@@ -222,13 +222,13 @@ async function initializeTranscribeProcessing(sessionId) {
 
     // 스트리밍 처리 시작
     connection.isProcessing = true;
-    
+
     try {
         console.log('Initializing AWS Transcribe streaming for session:', sessionId);
-        
+
         // AWS Transcribe 스트림 시작
         await startTranscribeStream(sessionId);
-        
+
     } catch (error) {
         console.error('Transcribe initialization error:', error);
         connection.isProcessing = false;
@@ -242,35 +242,35 @@ function isValidAudioData(audioBuffer) {
     if (!audioBuffer || audioBuffer.length === 0) {
         return false;
     }
-    
+
     // 최소 길이 체크 (0.5초 이상)
     if (audioBuffer.length < 16000) { // 16kHz * 0.5초 * 2 bytes
         console.log('Audio too short:', audioBuffer.length);
         return false;
     }
-    
+
     // RMS 에너지 계산
     let sum = 0;
     const samples = audioBuffer.length / 2; // 16-bit samples
-    
+
     for (let i = 0; i < audioBuffer.length; i += 2) {
         const sample = audioBuffer.readInt16LE(i);
         sum += sample * sample;
     }
-    
+
     const rms = Math.sqrt(sum / samples);
     const normalizedRMS = rms / 32768; // 16-bit 정규화
-    
+
     console.log('Audio RMS:', normalizedRMS);
-    
+
     // 최소 에너지 임계값 (배경 소음보다 충분히 높아야 함)
     const minEnergyThreshold = 0.01;
-    
+
     if (normalizedRMS < minEnergyThreshold) {
         console.log('Audio energy too low, likely silence or noise');
         return false;
     }
-    
+
     return true;
 }
 
@@ -291,26 +291,26 @@ async function handleTranscription(sessionId, transcript) {
     }
 
     console.log('Handling transcription:', transcript);
-    
+
     try {
         // AI 응답 생성
         const aiResponse = await generateAIResponse(transcript, connection.conversationHistory);
         if (!aiResponse) return;
-        
+
         // 대화 히스토리 업데이트
         connection.conversationHistory.push(
             { role: 'user', content: transcript },
             { role: 'assistant', content: aiResponse }
         );
-        
+
         // 히스토리 길이 제한 (메모리 관리)
         if (connection.conversationHistory.length > 20) {
             connection.conversationHistory.splice(0, 2);
         }
-        
+
         // TTS 생성 및 전송
         await generateAndStreamTTS(sessionId, aiResponse);
-        
+
         // 대화 로그 전송
         connection.ws.send(JSON.stringify({
             type: 'conversation',
@@ -318,7 +318,7 @@ async function handleTranscription(sessionId, transcript) {
             assistant: aiResponse,
             timestamp: Date.now()
         }));
-        
+
     } catch (error) {
         console.error('Transcription handling error:', error);
     }
@@ -330,9 +330,9 @@ async function generateAIResponse(userMessage, history) {
         const completion = await openai.chat.completions.create({
             model: 'gpt-3.5-turbo',
             messages: [
-                { 
-                    role: 'system', 
-                    content: '당신은 실시간 음성 대화를 하는 친근한 AI 어시스턴트입니다. 자연스럽고 간결하게 대화하세요. 전화 통화하듯이 반응하고, 상대방이 말을 끊을 수 있음을 고려해 핵심부터 말하세요.' 
+                {
+                    role: 'system',
+                    content: '당신은 실시간 음성 대화를 하는 친근한 AI 어시스턴트입니다. 자연스럽고 간결하게 대화하세요. 전화 통화하듯이 반응하고, 상대방이 말을 끊을 수 있음을 고려해 핵심부터 말하세요.'
                 },
                 ...history,
                 { role: 'user', content: userMessage }
@@ -340,9 +340,9 @@ async function generateAIResponse(userMessage, history) {
             max_tokens: 150,
             temperature: 0.8
         });
-        
+
         return completion.choices[0].message.content;
-        
+
     } catch (error) {
         console.error('AI response error:', error);
         return null;
@@ -356,16 +356,16 @@ async function generateAndStreamTTS(sessionId, text) {
         console.log('Connection not found, skipping TTS for session:', sessionId);
         return;
     }
-    
+
     // 통화가 종료되었거나 처리 중단된 경우 TTS 생성하지 않음
     if (!connection.isProcessing) {
         console.log('Call ended or processing stopped, skipping TTS for session:', sessionId);
         return;
     }
-    
+
     try {
         console.log('Generating TTS for:', text.substring(0, 50) + '...');
-        
+
         const command = new SynthesizeSpeechCommand({
             Text: text,
             OutputFormat: 'mp3',
@@ -373,26 +373,26 @@ async function generateAndStreamTTS(sessionId, text) {
             Engine: 'neural',
             SampleRate: '22050'
         });
-        
+
         const ttsResult = await polly.send(command);
-        
+
         if (ttsResult.AudioStream) {
             const chunks = [];
             for await (const chunk of ttsResult.AudioStream) {
                 chunks.push(chunk);
             }
             const audioBuffer = Buffer.concat(chunks);
-            
+
             // 실시간 오디오 스트리밍
             connection.ws.send(JSON.stringify({
                 type: 'audio-response',
                 audioData: audioBuffer.toString('base64'),
                 contentType: 'audio/mp3'
             }));
-            
+
             console.log('TTS audio sent to client');
         }
-        
+
     } catch (error) {
         console.error('TTS error:', error);
     }
