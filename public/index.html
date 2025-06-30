@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VibeMe - AI Voice Chatbot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 600px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 0.5rem;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .chat-container {
+            height: 300px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            overflow-y: auto;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #fafafa;
+        }
+        
+        .message {
+            margin-bottom: 1rem;
+            padding: 0.8rem;
+            border-radius: 10px;
+        }
+        
+        .message.user {
+            background: #667eea;
+            color: white;
+            margin-left: 20%;
+        }
+        
+        .message.bot {
+            background: #e8f2ff;
+            color: #333;
+            margin-right: 20%;
+        }
+        
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .input-container input {
+            flex: 1;
+            padding: 1rem;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 1rem;
+        }
+        
+        .input-container button {
+            padding: 1rem 2rem;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: bold;
+        }
+        
+        .input-container button:hover {
+            background: #5a67d8;
+        }
+        
+        .input-container button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        .status.connected {
+            color: #28a745;
+        }
+        
+        .status.disconnected {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎤 VibeMe</h1>
+            <p>AI 음성 챗봇 데모</p>
+        </div>
+        
+        <div class="chat-container" id="chatContainer">
+            <div class="message bot">
+                안녕하세요! 저는 VibeMe AI 어시스턴트입니다. 무엇을 도와드릴까요?
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <input type="text" id="messageInput" placeholder="메시지를 입력하세요..." />
+            <button id="sendButton">전송</button>
+            <button id="stopAudioButton" style="display: none;">🔇 음성 정지</button>
+        </div>
+        
+        <div class="status" id="status">연결 중...</div>
+    </div>
+
+    <script src="client.js"></script>
+</body>
+</html>
