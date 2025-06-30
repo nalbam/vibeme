@@ -1,13 +1,21 @@
-class VibeMeRealTime {
+class VibeMeWebRTC {
     constructor() {
         this.ws = null;
-        this.peerConnection = null;
         this.localStream = null;
         this.audioContext = null;
         this.scriptProcessor = null;
         this.isCallActive = false;
         this.isConnected = false;
-        this.currentAudio = null; // 현재 재생 중인 오디오 추적
+        this.currentAudio = null;
+        this.isSpeaking = false;
+        this.sessionId = null;
+        
+        // 음성 활동 감지 설정
+        this.voiceThreshold = 0.01;
+        this.silenceThreshold = 0.005;
+        this.voiceDetectionBuffer = [];
+        this.bufferSize = 10; // 최근 10개 청크로 음성 활동 판단
+        
         this.init();
     }
     
@@ -71,6 +79,7 @@ class VibeMeRealTime {
         switch (data.type) {
             case 'call-ready':
                 console.log('Call ready, session:', data.sessionId);
+                this.sessionId = data.sessionId;
                 break;
                 
             case 'audio-response':
@@ -90,7 +99,7 @@ class VibeMeRealTime {
         try {
             this.updateStatus('마이크 접근 권한 요청 중...', 'connecting');
             
-            // 마이크 접근
+            // 고품질 마이크 설정
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -104,14 +113,17 @@ class VibeMeRealTime {
             console.log('Microphone access granted');
             
             // Web Audio API 설정
-            this.audioContext = new AudioContext();
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+            
             const source = this.audioContext.createMediaStreamSource(this.localStream);
             
-            // ScriptProcessor로 실시간 오디오 캡처
+            // ScriptProcessor로 실시간 오디오 캡처 (WebRTC 방식)
             this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
             
             let audioBuffer = [];
-            let lastAudioTime = Date.now();
+            let lastSendTime = Date.now();
             
             this.scriptProcessor.onaudioprocess = (event) => {
                 if (!this.isCallActive) return;
@@ -119,24 +131,30 @@ class VibeMeRealTime {
                 const inputData = event.inputBuffer.getChannelData(0);
                 const now = Date.now();
                 
-                // 음성 활동 감지 - 현재 재생 중인 TTS 중단
-                const hasVoiceActivity = this.detectVoiceActivity(inputData);
-                if (hasVoiceActivity && this.currentAudio) {
-                    console.log('Voice detected, stopping current TTS playback');
+                // 실시간 음성 활동 감지
+                const voiceActivity = this.detectAdvancedVoiceActivity(inputData);
+                
+                // 사용자가 말하기 시작하면 TTS 중단
+                if (voiceActivity && !this.isSpeaking) {
+                    this.isSpeaking = true;
                     this.stopCurrentAudio();
+                    this.sendStopTTSSignal();
+                    console.log('🎤 User started speaking - TTS interrupted');
+                } else if (!voiceActivity && this.isSpeaking) {
+                    this.isSpeaking = false;
+                    console.log('🔇 User stopped speaking');
                 }
                 
                 // 16-bit PCM으로 변환
                 const audioData = this.convertFloat32ToInt16(inputData);
                 audioBuffer.push(...audioData);
                 
-                // 500ms마다 전송
-                if (now - lastAudioTime > 500) {
+                // 250ms마다 전송 (더 빠른 반응성을 위해)
+                if (now - lastSendTime > 250) {
                     if (audioBuffer.length > 0) {
-                        console.log('Sending audio buffer, length:', audioBuffer.length, 'type:', typeof audioBuffer[0]);
                         this.sendAudioStream(audioBuffer);
                         audioBuffer = [];
-                        lastAudioTime = now;
+                        lastSendTime = now;
                     }
                 }
             };
@@ -154,7 +172,7 @@ class VibeMeRealTime {
                 type: 'start-call'
             }));
             
-            console.log('Real-time voice call started');
+            console.log('WebRTC real-time voice call started');
             
         } catch (error) {
             console.error('Failed to start call:', error);
@@ -164,6 +182,7 @@ class VibeMeRealTime {
     
     endCall() {
         this.isCallActive = false;
+        this.isSpeaking = false;
         
         // 현재 재생 중인 TTS 중단
         this.stopCurrentAudio();
@@ -201,25 +220,22 @@ class VibeMeRealTime {
     sendAudioStream(audioData) {
         if (this.ws && this.isConnected && this.isCallActive) {
             try {
-                const payload = {
+                this.ws.send(JSON.stringify({
                     type: 'audio-stream',
                     audioData: Array.from(audioData)
-                };
-                console.log('Sending WebSocket message:', {
-                    type: payload.type,
-                    audioDataLength: payload.audioData.length,
-                    firstFewSamples: payload.audioData.slice(0, 5)
-                });
-                this.ws.send(JSON.stringify(payload));
+                }));
             } catch (error) {
                 console.error('Failed to send audio stream:', error);
             }
-        } else {
-            console.log('Cannot send audio:', {
-                hasWs: !!this.ws,
-                isConnected: this.isConnected,
-                isCallActive: this.isCallActive
-            });
+        }
+    }
+    
+    sendStopTTSSignal() {
+        if (this.ws && this.isConnected) {
+            this.ws.send(JSON.stringify({
+                type: 'stop-tts',
+                sessionId: this.sessionId
+            }));
         }
     }
     
@@ -232,15 +248,26 @@ class VibeMeRealTime {
         return int16Array;
     }
     
-    // 음성 활동 감지 (간단한 볼륨 기반)
-    detectVoiceActivity(audioData) {
+    // 고급 음성 활동 감지
+    detectAdvancedVoiceActivity(audioData) {
+        // RMS 계산
         let sum = 0;
         for (let i = 0; i < audioData.length; i++) {
-            sum += Math.abs(audioData[i]);
+            sum += audioData[i] * audioData[i];
         }
-        const avgVolume = sum / audioData.length;
-        const threshold = 0.01; // 음성 감지 임계값
-        return avgVolume > threshold;
+        const rms = Math.sqrt(sum / audioData.length);
+        
+        // 버퍼에 추가
+        this.voiceDetectionBuffer.push(rms);
+        if (this.voiceDetectionBuffer.length > this.bufferSize) {
+            this.voiceDetectionBuffer.shift();
+        }
+        
+        // 평균 RMS 계산
+        const avgRMS = this.voiceDetectionBuffer.reduce((a, b) => a + b, 0) / this.voiceDetectionBuffer.length;
+        
+        // 음성 활동 판단
+        return avgRMS > this.voiceThreshold;
     }
     
     // 현재 재생 중인 오디오 중단
@@ -249,12 +276,21 @@ class VibeMeRealTime {
             this.currentAudio.pause();
             this.currentAudio.currentTime = 0;
             this.currentAudio = null;
-            console.log('Current audio stopped');
+            console.log('🔇 TTS audio stopped');
         }
     }
     
     async playAIResponse(audioBase64) {
         try {
+            // 사용자가 말하고 있으면 재생하지 않음
+            if (this.isSpeaking) {
+                console.log('User is speaking, skipping TTS playback');
+                return;
+            }
+            
+            // 이전 오디오가 재생 중이면 중단
+            this.stopCurrentAudio();
+            
             // Base64를 Blob으로 변환
             const audioData = atob(audioBase64);
             const audioArray = new Uint8Array(audioData.length);
@@ -265,28 +301,34 @@ class VibeMeRealTime {
             const audioBlob = new Blob([audioArray], { type: 'audio/mp3' });
             const audioUrl = URL.createObjectURL(audioBlob);
             
-            // 이전 오디오가 재생 중이면 중단
-            this.stopCurrentAudio();
-            
             // 오디오 재생
             const audio = new Audio(audioUrl);
-            this.currentAudio = audio; // 현재 오디오 추적
+            this.currentAudio = audio;
             
             audio.addEventListener('loadeddata', () => {
-                console.log('AI response audio loaded, playing...');
+                console.log('🔊 AI response audio loaded, playing...');
             });
             
             audio.addEventListener('ended', () => {
                 URL.revokeObjectURL(audioUrl);
-                this.currentAudio = null; // 재생 완료 시 추적 해제
-                console.log('AI response playback finished');
+                this.currentAudio = null;
+                console.log('🎵 AI response playback finished');
             });
             
             audio.addEventListener('error', (error) => {
                 console.error('AI response playback error:', error);
                 URL.revokeObjectURL(audioUrl);
-                this.currentAudio = null; // 에러 시 추적 해제
+                this.currentAudio = null;
             });
+            
+            // 사용자가 말하기 시작하면 재생 중단하도록 이벤트 리스너 추가
+            const checkUserSpeaking = () => {
+                if (this.isSpeaking && this.currentAudio === audio) {
+                    this.stopCurrentAudio();
+                }
+            };
+            
+            audio.addEventListener('timeupdate', checkUserSpeaking);
             
             await audio.play();
             
@@ -296,8 +338,6 @@ class VibeMeRealTime {
     }
     
     addConversationToLog(userText, assistantText, timestamp) {
-        const chatContainer = document.getElementById('chatContainer');
-        
         // 사용자 메시지
         this.addMessage(userText, 'user', timestamp);
         
@@ -349,5 +389,5 @@ class VibeMeRealTime {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    new VibeMeRealTime();
+    new VibeMeWebRTC();
 });

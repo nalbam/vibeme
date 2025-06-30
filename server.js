@@ -6,27 +6,33 @@ const WebSocket = require('ws');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 const OpenAI = require('openai');
 const { PollyClient, SynthesizeSpeechCommand } = require('@aws-sdk/client-polly');
+const { 
+    TranscribeStreamingClient, 
+    StartStreamTranscriptionCommand 
+} = require('@aws-sdk/client-transcribe-streaming');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// OpenAI 설정
+// OpenAI 설정 (대화 생성용)
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
 
-// AWS Polly 설정
-const polly = new PollyClient({
+// AWS 설정
+const awsConfig = {
     region: process.env.AWS_REGION || 'ap-northeast-2',
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
     },
-});
+};
+
+const polly = new PollyClient(awsConfig);
+const transcribeClient = new TranscribeStreamingClient(awsConfig);
 
 // 미들웨어
 app.use(cors());
@@ -45,51 +51,45 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok' });
 });
 
-// WebRTC 시그널링 및 실시간 오디오 처리
+// WebSocket 연결 처리
 wss.on('connection', (ws) => {
     const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-    console.log(`New WebRTC connection: ${sessionId}`);
+    console.log(`New connection: ${sessionId}`);
     
-    activeConnections.set(sessionId, {
+    const connection = {
         ws: ws,
-        isProcessing: false,
+        transcribeStream: null,
         conversationHistory: [],
-        audioBuffer: [],
-        vadTimer: null
-    });
+        isProcessing: false,
+        audioChunks: []
+    };
+    
+    activeConnections.set(sessionId, connection);
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message.toString());
-            const connection = activeConnections.get(sessionId);
             
             switch (data.type) {
-                case 'offer':
-                case 'answer':
-                case 'ice-candidate':
-                    // WebRTC 시그널링 중계
-                    ws.send(JSON.stringify(data));
-                    break;
-                    
-                case 'audio-stream':
-                    console.log('Received audio-stream message, data length:', data.audioData?.length);
-                    await handleAudioStream(sessionId, data.audioData);
-                    break;
-                    
                 case 'start-call':
+                    await startTranscribeStream(sessionId);
                     ws.send(JSON.stringify({
                         type: 'call-ready',
                         sessionId: sessionId
                     }));
                     break;
                     
+                case 'audio-stream':
+                    await handleAudioStream(sessionId, data.audioData);
+                    break;
+                    
+                case 'stop-tts':
+                    // TTS 중단 신호 처리
+                    console.log('TTS stop signal received');
+                    break;
+                    
                 case 'end-call':
-                    if (connection) {
-                        connection.isProcessing = false;
-                        if (connection.vadTimer) {
-                            clearTimeout(connection.vadTimer);
-                        }
-                    }
+                    await endTranscribeStream(sessionId);
                     break;
             }
             
@@ -99,118 +99,92 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        console.log(`WebRTC connection closed: ${sessionId}`);
-        const connection = activeConnections.get(sessionId);
-        if (connection && connection.vadTimer) {
-            clearTimeout(connection.vadTimer);
-        }
+        console.log(`Connection closed: ${sessionId}`);
+        endTranscribeStream(sessionId);
         activeConnections.delete(sessionId);
     });
 });
 
-// 실시간 오디오 스트림 처리
-async function handleAudioStream(sessionId, audioData) {
+// AWS Transcribe 스트림 시작
+async function startTranscribeStream(sessionId) {
     const connection = activeConnections.get(sessionId);
-    if (!connection) {
-        console.log('No connection found for session:', sessionId);
-        return;
-    }
+    if (!connection) return;
 
-    if (!audioData || audioData.length === 0) {
-        console.log('Empty or invalid audio data received');
-        return;
-    }
+    try {
+        console.log(`Starting Transcribe stream for session: ${sessionId}`);
+        
+        // 오디오 스트림 생성
+        const audioStream = async function* () {
+            while (connection.audioChunks.length > 0) {
+                const chunk = connection.audioChunks.shift();
+                yield { AudioEvent: { AudioChunk: chunk } };
+            }
+        };
 
-    console.log('Received audio stream, length:', audioData.length, 'type:', typeof audioData[0]);
+        const command = new StartStreamTranscriptionCommand({
+            LanguageCode: 'ko-KR',
+            MediaEncoding: 'pcm',
+            MediaSampleRateHertz: 16000,
+            AudioStream: audioStream()
+        });
 
-    // 오디오 데이터를 버퍼에 누적
-    connection.audioBuffer.push(...audioData);
-    console.log('Total buffer length after push:', connection.audioBuffer.length);
-    
-    // 3초 분량의 오디오 (16kHz * 3초 = 48000 샘플)가 쌓이면 처리
-    const targetBufferSize = 48000;
-    
-    if (connection.audioBuffer.length >= targetBufferSize && !connection.isProcessing) {
-        console.log('Buffer size reached target, processing audio immediately...');
-        await processAccumulatedAudio(sessionId);
-        return;
+        const response = await transcribeClient.send(command);
+        
+        // 실시간 전사 결과 처리
+        if (response.TranscriptResultStream) {
+            for await (const event of response.TranscriptResultStream) {
+                if (event.TranscriptEvent) {
+                    const results = event.TranscriptEvent.Transcript.Results;
+                    if (results && results.length > 0) {
+                        const result = results[0];
+                        if (!result.IsPartial && result.Alternatives && result.Alternatives.length > 0) {
+                            const transcript = result.Alternatives[0].Transcript;
+                            console.log('Transcription result:', transcript);
+                            await handleTranscription(sessionId, transcript);
+                        }
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Transcribe stream error:', error);
     }
-    
-    // VAD 타이머 (침묵 감지용) - 청크 기반 처리와 별도로 운영
-    if (connection.vadTimer) {
-        clearTimeout(connection.vadTimer);
-    }
-    
-    // 4초 침묵 후 강제 처리 (백업용)
-    connection.vadTimer = setTimeout(async () => {
-        console.log('VAD timeout triggered, processing remaining audio...');
-        await processAccumulatedAudio(sessionId);
-    }, 4000);
 }
 
-// 누적된 오디오 처리
-async function processAccumulatedAudio(sessionId) {
+// 오디오 스트림 처리
+async function handleAudioStream(sessionId, audioData) {
     const connection = activeConnections.get(sessionId);
-    if (!connection || connection.isProcessing || connection.audioBuffer.length === 0) {
-        console.log('Skipping audio processing:', {
-            hasConnection: !!connection,
-            isProcessing: connection?.isProcessing,
-            bufferLength: connection?.audioBuffer?.length || 0
-        });
-        return;
-    }
+    if (!connection || !audioData) return;
+
+    // PCM 데이터를 Buffer로 변환
+    const audioBuffer = Buffer.from(new Int16Array(audioData).buffer);
     
+    // 오디오 청크를 큐에 추가
+    connection.audioChunks.push(audioBuffer);
+    
+    // 일정 크기가 쌓이면 처리 (0.5초 분량)
+    if (connection.audioChunks.length >= 8) { // 16kHz * 0.5초 / 1024 samples per chunk
+        await processAudioChunks(sessionId);
+    }
+}
+
+// 오디오 청크 일괄 처리
+async function processAudioChunks(sessionId) {
+    const connection = activeConnections.get(sessionId);
+    if (!connection || connection.isProcessing) return;
+
     connection.isProcessing = true;
-    console.log('Processing accumulated audio, buffer length:', connection.audioBuffer.length);
     
     try {
-        // 오디오 버퍼를 Int16Array로 변환 (클라이언트에서 전송한 형식과 일치)
-        const combinedAudio = new Int16Array(connection.audioBuffer);
-        connection.audioBuffer = []; // 버퍼 초기화
+        // 청크들을 결합
+        const combinedAudio = Buffer.concat(connection.audioChunks);
+        connection.audioChunks = [];
         
-        console.log('Combined audio length:', combinedAudio.length);
+        console.log('Processing audio chunks, total size:', combinedAudio.length);
         
-        if (combinedAudio.length < 8000) { // 최소 0.5초 분량 (16kHz)
-            console.log('Audio too short, skipping');
-            connection.isProcessing = false;
-            return;
-        }
-        
-        // STT 처리
-        const transcription = await processSTT(combinedAudio);
-        if (!transcription) {
-            connection.isProcessing = false;
-            return;
-        }
-        
-        // AI 응답 생성
-        const aiResponse = await generateAIResponse(transcription, connection.conversationHistory);
-        if (!aiResponse) {
-            connection.isProcessing = false;
-            return;
-        }
-        
-        // 대화 히스토리 업데이트
-        connection.conversationHistory.push(
-            { role: 'user', content: transcription },
-            { role: 'assistant', content: aiResponse }
-        );
-        
-        // 히스토리 길이 제한
-        if (connection.conversationHistory.length > 20) {
-            connection.conversationHistory.splice(0, 2);
-        }
-        
-        // TTS 생성 및 스트리밍
-        await generateAndStreamTTS(sessionId, aiResponse);
-        
-        // 대화 로그 전송
-        connection.ws.send(JSON.stringify({
-            type: 'conversation',
-            user: transcription,
-            assistant: aiResponse,
-            timestamp: Date.now()
-        }));
+        // AWS Transcribe로 전송 (실제 구현에서는 스트리밍 방식 사용)
+        await processWithTranscribe(sessionId, combinedAudio);
         
     } catch (error) {
         console.error('Audio processing error:', error);
@@ -219,34 +193,19 @@ async function processAccumulatedAudio(sessionId) {
     }
 }
 
-// 오디오 버퍼 결합
-function combineAudioBuffers(buffers) {
-    const totalLength = buffers.reduce((sum, buffer) => sum + buffer.length, 0);
-    const combined = new Uint8Array(totalLength);
-    let offset = 0;
-    
-    for (const buffer of buffers) {
-        const uint8Buffer = new Uint8Array(buffer);
-        combined.set(uint8Buffer, offset);
-        offset += uint8Buffer.length;
-    }
-    
-    return combined;
-}
+// AWS Transcribe로 음성 인식 (임시 구현 - 실제로는 스트리밍 사용)
+async function processWithTranscribe(sessionId, audioBuffer) {
+    const connection = activeConnections.get(sessionId);
+    if (!connection) return;
 
-// STT 처리
-async function processSTT(audioBuffer) {
     try {
-        console.log('Processing STT for buffer of length:', audioBuffer.length);
+        // 임시: OpenAI Whisper 사용 (AWS Transcribe 스트리밍 완전 구현까지)
+        const fs = require('fs');
+        const tempFilePath = path.join(__dirname, `temp_${sessionId}_${Date.now()}.wav`);
         
-        // PCM 데이터를 WAV 형식으로 변환
+        // PCM to WAV 변환
         const wavBuffer = createWavBuffer(audioBuffer);
-        
-        // 임시 파일로 저장
-        const tempFilePath = path.join(__dirname, `temp_stream_${Date.now()}.wav`);
         fs.writeFileSync(tempFilePath, wavBuffer);
-        
-        console.log('Saved WAV file:', tempFilePath, 'size:', wavBuffer.length);
         
         const transcription = await openai.audio.transcriptions.create({
             file: fs.createReadStream(tempFilePath),
@@ -254,15 +213,14 @@ async function processSTT(audioBuffer) {
             language: 'ko'
         });
         
-        // 임시 파일 삭제
         fs.unlinkSync(tempFilePath);
         
-        console.log('STT result:', transcription.text);
-        return transcription.text;
+        if (transcription.text.trim()) {
+            await handleTranscription(sessionId, transcription.text);
+        }
         
     } catch (error) {
-        console.error('STT error:', error);
-        return null;
+        console.error('Transcribe processing error:', error);
     }
 }
 
@@ -272,20 +230,19 @@ function createWavBuffer(pcmBuffer) {
     const numChannels = 1;
     const bitsPerSample = 16;
     
-    // pcmBuffer는 이미 Int16Array이므로 길이는 샘플 수
-    const dataLength = pcmBuffer.length * 2; // 16-bit samples = 2 bytes per sample
+    const dataLength = pcmBuffer.length;
     const headerLength = 44;
     const totalLength = headerLength + dataLength;
     
     const wavBuffer = Buffer.alloc(totalLength);
     
-    // WAV 헤더 작성
+    // WAV 헤더
     wavBuffer.write('RIFF', 0);
     wavBuffer.writeUInt32LE(totalLength - 8, 4);
     wavBuffer.write('WAVE', 8);
     wavBuffer.write('fmt ', 12);
-    wavBuffer.writeUInt32LE(16, 16); // PCM format chunk size
-    wavBuffer.writeUInt16LE(1, 20); // PCM format
+    wavBuffer.writeUInt32LE(16, 16);
+    wavBuffer.writeUInt16LE(1, 20);
     wavBuffer.writeUInt16LE(numChannels, 22);
     wavBuffer.writeUInt32LE(sampleRate, 24);
     wavBuffer.writeUInt32LE(sampleRate * numChannels * bitsPerSample / 8, 28);
@@ -294,12 +251,49 @@ function createWavBuffer(pcmBuffer) {
     wavBuffer.write('data', 36);
     wavBuffer.writeUInt32LE(dataLength, 40);
     
-    // PCM 데이터를 16-bit로 복사 (이미 올바른 형식)
-    for (let i = 0; i < pcmBuffer.length; i++) {
-        wavBuffer.writeInt16LE(pcmBuffer[i], headerLength + i * 2);
-    }
+    // PCM 데이터 복사
+    pcmBuffer.copy(wavBuffer, headerLength);
     
     return wavBuffer;
+}
+
+// 전사 결과 처리
+async function handleTranscription(sessionId, transcript) {
+    const connection = activeConnections.get(sessionId);
+    if (!connection) return;
+
+    console.log('Handling transcription:', transcript);
+    
+    try {
+        // AI 응답 생성
+        const aiResponse = await generateAIResponse(transcript, connection.conversationHistory);
+        if (!aiResponse) return;
+        
+        // 대화 히스토리 업데이트
+        connection.conversationHistory.push(
+            { role: 'user', content: transcript },
+            { role: 'assistant', content: aiResponse }
+        );
+        
+        // 히스토리 길이 제한 (메모리 관리)
+        if (connection.conversationHistory.length > 20) {
+            connection.conversationHistory.splice(0, 2);
+        }
+        
+        // TTS 생성 및 전송
+        await generateAndStreamTTS(sessionId, aiResponse);
+        
+        // 대화 로그 전송
+        connection.ws.send(JSON.stringify({
+            type: 'conversation',
+            user: transcript,
+            assistant: aiResponse,
+            timestamp: Date.now()
+        }));
+        
+    } catch (error) {
+        console.error('Transcription handling error:', error);
+    }
 }
 
 // AI 응답 생성
@@ -310,13 +304,13 @@ async function generateAIResponse(userMessage, history) {
             messages: [
                 { 
                     role: 'system', 
-                    content: '당신은 실시간 음성 대화를 하는 친근한 AI입니다. 자연스럽고 간결하게 대화하세요. 전화 통화하듯이 반응하세요.' 
+                    content: '당신은 실시간 음성 대화를 하는 친근한 AI 어시스턴트입니다. 자연스럽고 간결하게 대화하세요. 전화 통화하듯이 반응하고, 상대방이 말을 끊을 수 있음을 고려해 핵심부터 말하세요.' 
                 },
                 ...history,
                 { role: 'user', content: userMessage }
             ],
-            max_tokens: 100,
-            temperature: 0.7
+            max_tokens: 150,
+            temperature: 0.8
         });
         
         return completion.choices[0].message.content;
@@ -327,12 +321,14 @@ async function generateAIResponse(userMessage, history) {
     }
 }
 
-// TTS 생성 및 스트리밍
+// AWS Polly TTS 생성 및 스트리밍
 async function generateAndStreamTTS(sessionId, text) {
     const connection = activeConnections.get(sessionId);
     if (!connection) return;
     
     try {
+        console.log('Generating TTS for:', text.substring(0, 50) + '...');
+        
         const command = new SynthesizeSpeechCommand({
             Text: text,
             OutputFormat: 'mp3',
@@ -356,6 +352,8 @@ async function generateAndStreamTTS(sessionId, text) {
                 audioData: audioBuffer.toString('base64'),
                 contentType: 'audio/mp3'
             }));
+            
+            console.log('TTS audio sent to client');
         }
         
     } catch (error) {
@@ -363,8 +361,24 @@ async function generateAndStreamTTS(sessionId, text) {
     }
 }
 
+// Transcribe 스트림 종료
+async function endTranscribeStream(sessionId) {
+    const connection = activeConnections.get(sessionId);
+    if (!connection) return;
+
+    if (connection.transcribeStream) {
+        try {
+            connection.transcribeStream.destroy();
+            connection.transcribeStream = null;
+            console.log(`Transcribe stream ended for session: ${sessionId}`);
+        } catch (error) {
+            console.error('Error ending transcribe stream:', error);
+        }
+    }
+}
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`🎤 VibeMe Real-time Voice Chat running on port ${PORT}`);
-    console.log(`📞 WebRTC P2P voice calling enabled`);
+    console.log(`🎤 VibeMe WebRTC + AWS Voice Chat running on port ${PORT}`);
+    console.log(`📞 Real-time conversation with AWS Transcribe + Polly enabled`);
 });
