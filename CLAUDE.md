@@ -128,18 +128,26 @@ const connection = {
 ### Common Error Patterns
 ```javascript
 // Stream processing errors
-'AWS Transcribe stream error: [error]'        // server.js:163
-'Stream processing stopped for session:'      // server.js:139
+'AWS Transcribe stream error: [error]'        // server.js:187
+'Stream processing stopped for session:'      // server.js:165
+'Transcribe stream closed or interrupted:'    // server.js:182
 'Audio chunk added to stream queue:'          // server.js:182
 
 // Connection management
 'New connection: [sessionId]'                 // server.js:57
 'Connection closed: [sessionId]'              // server.js:109
+'Transcribe stream ended for session:'       // server.js:408
 
 // TTS processing
 'Generating TTS for: [text]...'               // server.js:403
 'TTS audio sent to client'                    // server.js:429
 ```
+
+### AWS Transcribe Stream Management
+- **Stream termination**: Use `isProcessing = false` flag, not `destroy()` method
+- **Error handling**: Streams may close naturally when connection ends
+- **Resource cleanup**: Always set `transcribeStream = null` after termination
+- **State checking**: Verify both `connection.isProcessing` and `activeConnections.has(sessionId)`
 
 ### Testing Approach
 - Use browser dev tools for WebRTC debugging

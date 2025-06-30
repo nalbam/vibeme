@@ -111,6 +111,7 @@ wss.on('connection', (ws) => {
         if (connection) {
             connection.isProcessing = false; // 모든 처리 중단
             connection.audioChunks = []; // 대기 중인 오디오 삭제
+            connection.transcribeStream = null; // 스트림 참조 제거
         }
         endTranscribeStream(sessionId);
         activeConnections.delete(sessionId);
@@ -158,24 +159,28 @@ async function startTranscribeStream(sessionId) {
         
         // 실시간 전사 결과 처리
         if (response.TranscriptResultStream) {
-            for await (const event of response.TranscriptResultStream) {
-                // 연결이 종료되었으면 스트림 처리 중단
-                if (!connection.isProcessing) {
-                    console.log('Stream processing stopped for session:', sessionId);
-                    break;
-                }
-                
-                if (event.TranscriptEvent) {
-                    const results = event.TranscriptEvent.Transcript.Results;
-                    if (results && results.length > 0) {
-                        const result = results[0];
-                        if (!result.IsPartial && result.Alternatives && result.Alternatives.length > 0) {
-                            const transcript = result.Alternatives[0].Transcript;
-                            console.log('AWS Transcribe result:', transcript);
-                            await handleTranscription(sessionId, transcript);
+            try {
+                for await (const event of response.TranscriptResultStream) {
+                    // 연결이 종료되었으면 스트림 처리 중단
+                    if (!connection.isProcessing || !activeConnections.has(sessionId)) {
+                        console.log('Stream processing stopped for session:', sessionId);
+                        break;
+                    }
+                    
+                    if (event.TranscriptEvent) {
+                        const results = event.TranscriptEvent.Transcript.Results;
+                        if (results && results.length > 0) {
+                            const result = results[0];
+                            if (!result.IsPartial && result.Alternatives && result.Alternatives.length > 0) {
+                                const transcript = result.Alternatives[0].Transcript;
+                                console.log('AWS Transcribe result:', transcript);
+                                await handleTranscription(sessionId, transcript);
+                            }
                         }
                     }
                 }
+            } catch (streamError) {
+                console.log('Transcribe stream closed or interrupted:', streamError.message);
             }
         }
         
@@ -398,9 +403,12 @@ async function endTranscribeStream(sessionId) {
     const connection = activeConnections.get(sessionId);
     if (!connection) return;
 
+    // AWS Transcribe 스트림은 isProcessing 플래그로 제어됨
+    // 스트림 자체는 연결 종료시 자동으로 정리됨
     if (connection.transcribeStream) {
         try {
-            connection.transcribeStream.destroy();
+            // 처리 상태를 false로 설정하여 스트림 루프 중단
+            connection.isProcessing = false;
             connection.transcribeStream = null;
             console.log(`Transcribe stream ended for session: ${sessionId}`);
         } catch (error) {
