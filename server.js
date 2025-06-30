@@ -90,6 +90,13 @@ wss.on('connection', (ws) => {
                     
                 case 'end-call':
                     await endTranscribeStream(sessionId);
+                    // 진행 중인 처리 중단
+                    const connection = activeConnections.get(sessionId);
+                    if (connection) {
+                        connection.isProcessing = false;
+                        connection.audioChunks = []; // 대기 중인 오디오 청크 삭제
+                        console.log('Call ended - stopped processing for session:', sessionId);
+                    }
                     break;
             }
             
@@ -100,6 +107,11 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         console.log(`Connection closed: ${sessionId}`);
+        const connection = activeConnections.get(sessionId);
+        if (connection) {
+            connection.isProcessing = false; // 모든 처리 중단
+            connection.audioChunks = []; // 대기 중인 오디오 삭제
+        }
         endTranscribeStream(sessionId);
         activeConnections.delete(sessionId);
     });
@@ -163,8 +175,8 @@ async function handleAudioStream(sessionId, audioData) {
     // 오디오 청크를 큐에 추가
     connection.audioChunks.push(audioBuffer);
     
-    // 일정 크기가 쌓이면 처리 (0.5초 분량)
-    if (connection.audioChunks.length >= 8) { // 16kHz * 0.5초 / 1024 samples per chunk
+    // 더 많은 데이터가 쌓였을 때만 처리 (1초 분량으로 증가)
+    if (connection.audioChunks.length >= 16) { // 16kHz * 1초 / 1024 samples per chunk
         await processAudioChunks(sessionId);
     }
 }
@@ -182,6 +194,12 @@ async function processAudioChunks(sessionId) {
         connection.audioChunks = [];
         
         console.log('Processing audio chunks, total size:', combinedAudio.length);
+        
+        // 오디오 데이터 유효성 검증
+        if (!isValidAudioData(combinedAudio)) {
+            console.log('Invalid audio data detected, skipping processing');
+            return;
+        }
         
         // AWS Transcribe로 전송 (실제 구현에서는 스트리밍 방식 사용)
         await processWithTranscribe(sessionId, combinedAudio);
@@ -224,6 +242,43 @@ async function processWithTranscribe(sessionId, audioBuffer) {
     }
 }
 
+// 오디오 데이터 유효성 검증
+function isValidAudioData(audioBuffer) {
+    if (!audioBuffer || audioBuffer.length === 0) {
+        return false;
+    }
+    
+    // 최소 길이 체크 (0.5초 이상)
+    if (audioBuffer.length < 16000) { // 16kHz * 0.5초 * 2 bytes
+        console.log('Audio too short:', audioBuffer.length);
+        return false;
+    }
+    
+    // RMS 에너지 계산
+    let sum = 0;
+    const samples = audioBuffer.length / 2; // 16-bit samples
+    
+    for (let i = 0; i < audioBuffer.length; i += 2) {
+        const sample = audioBuffer.readInt16LE(i);
+        sum += sample * sample;
+    }
+    
+    const rms = Math.sqrt(sum / samples);
+    const normalizedRMS = rms / 32768; // 16-bit 정규화
+    
+    console.log('Audio RMS:', normalizedRMS);
+    
+    // 최소 에너지 임계값 (배경 소음보다 충분히 높아야 함)
+    const minEnergyThreshold = 0.01;
+    
+    if (normalizedRMS < minEnergyThreshold) {
+        console.log('Audio energy too low, likely silence or noise');
+        return false;
+    }
+    
+    return true;
+}
+
 // PCM을 WAV로 변환
 function createWavBuffer(pcmBuffer) {
     const sampleRate = 16000;
@@ -260,7 +315,16 @@ function createWavBuffer(pcmBuffer) {
 // 전사 결과 처리
 async function handleTranscription(sessionId, transcript) {
     const connection = activeConnections.get(sessionId);
-    if (!connection) return;
+    if (!connection) {
+        console.log('Connection not found, skipping transcription handling for session:', sessionId);
+        return;
+    }
+
+    // 통화가 종료된 경우 전사 결과 처리하지 않음
+    if (!connection.isProcessing) {
+        console.log('Call ended, skipping transcription handling for session:', sessionId);
+        return;
+    }
 
     console.log('Handling transcription:', transcript);
     
@@ -324,7 +388,16 @@ async function generateAIResponse(userMessage, history) {
 // AWS Polly TTS 생성 및 스트리밍
 async function generateAndStreamTTS(sessionId, text) {
     const connection = activeConnections.get(sessionId);
-    if (!connection) return;
+    if (!connection) {
+        console.log('Connection not found, skipping TTS for session:', sessionId);
+        return;
+    }
+    
+    // 통화가 종료되었거나 처리 중단된 경우 TTS 생성하지 않음
+    if (!connection.isProcessing) {
+        console.log('Call ended or processing stopped, skipping TTS for session:', sessionId);
+        return;
+    }
     
     try {
         console.log('Generating TTS for:', text.substring(0, 50) + '...');

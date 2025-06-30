@@ -9,42 +9,44 @@ class VibeMeWebRTC {
         this.currentAudio = null;
         this.isSpeaking = false;
         this.sessionId = null;
-        
+
         // 음성 활동 감지 설정
         this.voiceThreshold = 0.01;
         this.silenceThreshold = 0.005;
         this.voiceDetectionBuffer = [];
         this.bufferSize = 10; // 최근 10개 청크로 음성 활동 판단
-        
+        this.consecutiveVoiceFrames = 0; // 연속 음성 프레임 카운터
+        this.minVoiceFrames = 2; // 최소 2프레임 연속 음성이어야 활동으로 인정
+
         this.init();
     }
-    
+
     init() {
         this.setupWebSocket();
         this.setupEventListeners();
         this.initWelcomeTime();
         this.updateStatus('연결 중...', 'connecting');
     }
-    
+
     initWelcomeTime() {
         const welcomeTime = document.getElementById('welcomeTime');
         if (welcomeTime) {
             welcomeTime.textContent = this.formatTime(new Date());
         }
     }
-    
+
     setupWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}`;
-        
+
         this.ws = new WebSocket(wsUrl);
-        
+
         this.ws.onopen = () => {
             console.log('WebSocket connected');
             this.isConnected = true;
             this.updateStatus('연결됨 - 통화 시작 가능', 'connected');
         };
-        
+
         this.ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -53,52 +55,52 @@ class VibeMeWebRTC {
                 console.error('WebSocket message parsing error:', error);
             }
         };
-        
+
         this.ws.onclose = () => {
             console.log('WebSocket disconnected');
             this.isConnected = false;
             this.updateStatus('연결 끊김 - 재연결 중...', 'disconnected');
             setTimeout(() => this.setupWebSocket(), 3000);
         };
-        
+
         this.ws.onerror = (error) => {
             console.error('WebSocket error:', error);
             this.updateStatus('연결 오류', 'disconnected');
         };
     }
-    
+
     setupEventListeners() {
         const callButton = document.getElementById('callButton');
         const endCallButton = document.getElementById('endCallButton');
-        
+
         callButton.addEventListener('click', () => this.startCall());
         endCallButton.addEventListener('click', () => this.endCall());
     }
-    
+
     async handleWebSocketMessage(data) {
         switch (data.type) {
             case 'call-ready':
                 console.log('Call ready, session:', data.sessionId);
                 this.sessionId = data.sessionId;
                 break;
-                
+
             case 'audio-response':
                 await this.playAIResponse(data.audioData);
                 break;
-                
+
             case 'conversation':
                 this.addConversationToLog(data.user, data.assistant, data.timestamp);
                 break;
-                
+
             default:
                 console.log('Unknown message type:', data.type);
         }
     }
-    
+
     async startCall() {
         try {
             this.updateStatus('마이크 접근 권한 요청 중...', 'connecting');
-            
+
             // 고품질 마이크 설정
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
@@ -109,31 +111,31 @@ class VibeMeWebRTC {
                     channelCount: 1
                 }
             });
-            
+
             console.log('Microphone access granted');
-            
+
             // Web Audio API 설정
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
                 sampleRate: 16000
             });
-            
+
             const source = this.audioContext.createMediaStreamSource(this.localStream);
-            
+
             // ScriptProcessor로 실시간 오디오 캡처 (WebRTC 방식)
             this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
-            
+
             let audioBuffer = [];
             let lastSendTime = Date.now();
-            
+
             this.scriptProcessor.onaudioprocess = (event) => {
                 if (!this.isCallActive) return;
-                
+
                 const inputData = event.inputBuffer.getChannelData(0);
                 const now = Date.now();
-                
+
                 // 실시간 음성 활동 감지
                 const voiceActivity = this.detectAdvancedVoiceActivity(inputData);
-                
+
                 // 사용자가 말하기 시작하면 TTS 중단
                 if (voiceActivity && !this.isSpeaking) {
                     this.isSpeaking = true;
@@ -144,11 +146,21 @@ class VibeMeWebRTC {
                     this.isSpeaking = false;
                     console.log('🔇 User stopped speaking');
                 }
-                
+
+                // 디버깅: 음성 감지 상태 주기적으로 출력
+                if (Math.random() < 0.01) { // 1% 확률로 출력
+                    console.log('Voice detection debug:', {
+                        voiceActivity,
+                        consecutiveFrames: this.consecutiveVoiceFrames,
+                        threshold: this.voiceThreshold,
+                        isSpeaking: this.isSpeaking
+                    });
+                }
+
                 // 16-bit PCM으로 변환
                 const audioData = this.convertFloat32ToInt16(inputData);
                 audioBuffer.push(...audioData);
-                
+
                 // 250ms마다 전송 (더 빠른 반응성을 위해)
                 if (now - lastSendTime > 250) {
                     if (audioBuffer.length > 0) {
@@ -158,65 +170,70 @@ class VibeMeWebRTC {
                     }
                 }
             };
-            
+
             source.connect(this.scriptProcessor);
             this.scriptProcessor.connect(this.audioContext.destination);
-            
+
             // 통화 시작
             this.isCallActive = true;
             this.updateCallButtons(true);
             this.updateStatus('📞 실시간 음성 대화 중...', 'calling');
-            
+
             // 서버에 통화 시작 알림
             this.ws.send(JSON.stringify({
                 type: 'start-call'
             }));
-            
+
             console.log('WebRTC real-time voice call started');
-            
+
         } catch (error) {
             console.error('Failed to start call:', error);
             this.updateStatus('마이크 접근 실패', 'disconnected');
         }
     }
-    
+
     endCall() {
+        console.log('📞 Ending call - stopping all audio and processing');
+
         this.isCallActive = false;
         this.isSpeaking = false;
-        
-        // 현재 재생 중인 TTS 중단
+
+        // 현재 재생 중인 TTS 강제 중단
         this.stopCurrentAudio();
-        
+
+        // 서버에 TTS 중단 신호 전송
+        this.sendStopTTSSignal();
+
         // 오디오 스트림 정리
         if (this.localStream) {
             this.localStream.getTracks().forEach(track => track.stop());
             this.localStream = null;
         }
-        
+
         // Web Audio API 정리
         if (this.scriptProcessor) {
             this.scriptProcessor.disconnect();
             this.scriptProcessor = null;
         }
-        
+
         if (this.audioContext) {
             this.audioContext.close();
             this.audioContext = null;
         }
-        
+
         // 서버에 통화 종료 알림
         if (this.ws && this.isConnected) {
             this.ws.send(JSON.stringify({
                 type: 'end-call'
             }));
         }
-        
+
         this.updateCallButtons(false);
         this.updateStatus('통화 종료됨', 'connected');
-        
+
         console.log('Call ended');
     }
-    
+
     sendAudioStream(audioData) {
         if (this.ws && this.isConnected && this.isCallActive) {
             try {
@@ -229,7 +246,7 @@ class VibeMeWebRTC {
             }
         }
     }
-    
+
     sendStopTTSSignal() {
         if (this.ws && this.isConnected) {
             this.ws.send(JSON.stringify({
@@ -238,7 +255,7 @@ class VibeMeWebRTC {
             }));
         }
     }
-    
+
     convertFloat32ToInt16(float32Array) {
         const int16Array = new Int16Array(float32Array.length);
         for (let i = 0; i < float32Array.length; i++) {
@@ -247,8 +264,8 @@ class VibeMeWebRTC {
         }
         return int16Array;
     }
-    
-    // 고급 음성 활동 감지
+
+    // 고급 음성 활동 감지 (더 엄격한 기준)
     detectAdvancedVoiceActivity(audioData) {
         // RMS 계산
         let sum = 0;
@@ -256,20 +273,35 @@ class VibeMeWebRTC {
             sum += audioData[i] * audioData[i];
         }
         const rms = Math.sqrt(sum / audioData.length);
-        
+
         // 버퍼에 추가
         this.voiceDetectionBuffer.push(rms);
         if (this.voiceDetectionBuffer.length > this.bufferSize) {
             this.voiceDetectionBuffer.shift();
         }
-        
-        // 평균 RMS 계산
+
+        // 현재 프레임이 임계값을 넘는지 확인
+        const currentFrameHasVoice = rms > this.voiceThreshold;
+
+        // 연속 음성 프레임 카운터 업데이트
+        if (currentFrameHasVoice) {
+            this.consecutiveVoiceFrames++;
+        } else {
+            this.consecutiveVoiceFrames = 0;
+        }
+
+        // 평균 RMS 계산 (추가 검증용)
         const avgRMS = this.voiceDetectionBuffer.reduce((a, b) => a + b, 0) / this.voiceDetectionBuffer.length;
-        
-        // 음성 활동 판단
-        return avgRMS > this.voiceThreshold;
+
+        // 더 엄격한 음성 활동 판단
+        // 1. 연속으로 minVoiceFrames 이상 음성이 감지되어야 함
+        // 2. 평균 RMS도 임계값 이상이어야 함
+        const hasConsistentVoice = this.consecutiveVoiceFrames >= this.minVoiceFrames;
+        const hasStrongSignal = avgRMS > this.voiceThreshold * 0.8; // 평균은 조금 더 관대하게
+
+        return hasConsistentVoice && hasStrongSignal;
     }
-    
+
     // 현재 재생 중인 오디오 중단
     stopCurrentAudio() {
         if (this.currentAudio) {
@@ -279,91 +311,98 @@ class VibeMeWebRTC {
             console.log('🔇 TTS audio stopped');
         }
     }
-    
+
     async playAIResponse(audioBase64) {
         try {
+            // 통화가 종료되었으면 재생하지 않음
+            if (!this.isCallActive) {
+                console.log('Call ended, skipping TTS playback');
+                return;
+            }
+
             // 사용자가 말하고 있으면 재생하지 않음
             if (this.isSpeaking) {
                 console.log('User is speaking, skipping TTS playback');
                 return;
             }
-            
+
             // 이전 오디오가 재생 중이면 중단
             this.stopCurrentAudio();
-            
+
             // Base64를 Blob으로 변환
             const audioData = atob(audioBase64);
             const audioArray = new Uint8Array(audioData.length);
             for (let i = 0; i < audioData.length; i++) {
                 audioArray[i] = audioData.charCodeAt(i);
             }
-            
+
             const audioBlob = new Blob([audioArray], { type: 'audio/mp3' });
             const audioUrl = URL.createObjectURL(audioBlob);
-            
+
             // 오디오 재생
             const audio = new Audio(audioUrl);
             this.currentAudio = audio;
-            
+
             audio.addEventListener('loadeddata', () => {
                 console.log('🔊 AI response audio loaded, playing...');
             });
-            
+
             audio.addEventListener('ended', () => {
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
                 console.log('🎵 AI response playback finished');
             });
-            
+
             audio.addEventListener('error', (error) => {
                 console.error('AI response playback error:', error);
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
             });
-            
-            // 사용자가 말하기 시작하면 재생 중단하도록 이벤트 리스너 추가
-            const checkUserSpeaking = () => {
-                if (this.isSpeaking && this.currentAudio === audio) {
+
+            // 사용자가 말하거나 통화가 종료되면 재생 중단하도록 이벤트 리스너 추가
+            const checkInterruption = () => {
+                if ((this.isSpeaking || !this.isCallActive) && this.currentAudio === audio) {
+                    console.log('🛑 TTS interrupted:', this.isSpeaking ? 'user speaking' : 'call ended');
                     this.stopCurrentAudio();
                 }
             };
-            
-            audio.addEventListener('timeupdate', checkUserSpeaking);
-            
+
+            audio.addEventListener('timeupdate', checkInterruption);
+
             await audio.play();
-            
+
         } catch (error) {
             console.error('Failed to play AI response:', error);
         }
     }
-    
+
     addConversationToLog(userText, assistantText, timestamp) {
         // 사용자 메시지
         this.addMessage(userText, 'user', timestamp);
-        
+
         // AI 응답
         this.addMessage(assistantText, 'bot', timestamp);
     }
-    
+
     addMessage(text, sender, timestamp = null) {
         const chatContainer = document.getElementById('chatContainer');
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${sender}`;
-        
+
         const contentDiv = document.createElement('div');
         contentDiv.className = 'message-content';
         contentDiv.textContent = text;
-        
+
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
         timeDiv.textContent = this.formatTime(timestamp ? new Date(timestamp) : new Date());
-        
+
         messageDiv.appendChild(contentDiv);
         messageDiv.appendChild(timeDiv);
         chatContainer.appendChild(messageDiv);
         chatContainer.scrollTop = chatContainer.scrollHeight;
     }
-    
+
     formatTime(date) {
         return date.toLocaleTimeString('ko-KR', {
             hour: '2-digit',
@@ -372,17 +411,17 @@ class VibeMeWebRTC {
             hour12: true
         });
     }
-    
+
     updateStatus(text, className) {
         const statusElement = document.getElementById('status');
         statusElement.textContent = text;
         statusElement.className = `status ${className}`;
     }
-    
+
     updateCallButtons(inCall) {
         const callButton = document.getElementById('callButton');
         const endCallButton = document.getElementById('endCallButton');
-        
+
         callButton.style.display = inCall ? 'none' : 'inline-block';
         endCallButton.style.display = inCall ? 'inline-block' : 'none';
     }
