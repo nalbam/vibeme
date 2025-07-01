@@ -309,6 +309,11 @@ class VibeMeWebRTC {
             this.currentAudio.currentTime = 0;
             this.currentAudio = null;
             console.log('🔇 TTS audio stopped');
+            
+            // 립싱크도 중지
+            if (window.characterManager) {
+                window.characterManager.onAIStopSpeaking();
+            }
         }
     }
 
@@ -329,6 +334,11 @@ class VibeMeWebRTC {
             // 이전 오디오가 재생 중이면 중단
             this.stopCurrentAudio();
 
+            // 캐릭터 립싱크 시작
+            if (window.characterManager) {
+                window.characterManager.onAIStartSpeaking();
+            }
+
             // Base64를 Blob으로 변환
             const audioData = atob(audioBase64);
             const audioArray = new Uint8Array(audioData.length);
@@ -343,6 +353,9 @@ class VibeMeWebRTC {
             const audio = new Audio(audioUrl);
             this.currentAudio = audio;
 
+            // 오디오 분석을 위한 Web Audio API 설정
+            this.setupAudioAnalyzer(audio);
+
             audio.addEventListener('loadeddata', () => {
                 console.log('🔊 AI response audio loaded, playing...');
             });
@@ -351,12 +364,22 @@ class VibeMeWebRTC {
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
                 console.log('🎵 AI response playback finished');
+                
+                // 캐릭터 립싱크 중지
+                if (window.characterManager) {
+                    window.characterManager.onAIStopSpeaking();
+                }
             });
 
             audio.addEventListener('error', (error) => {
                 console.error('AI response playback error:', error);
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
+                
+                // 오류 시에도 립싱크 중지
+                if (window.characterManager) {
+                    window.characterManager.onAIStopSpeaking();
+                }
             });
 
             // 사용자가 말하거나 통화가 종료되면 재생 중단하도록 이벤트 리스너 추가
@@ -424,6 +447,61 @@ class VibeMeWebRTC {
 
         callButton.style.display = inCall ? 'none' : 'inline-block';
         endCallButton.style.display = inCall ? 'inline-block' : 'none';
+    }
+
+    // 오디오 분석기 설정 (립싱크용)
+    setupAudioAnalyzer(audio) {
+        try {
+            if (!window.characterManager) return;
+
+            // 오디오 컨텍스트가 없다면 생성
+            if (!this.analyzerAudioContext) {
+                this.analyzerAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            const source = this.analyzerAudioContext.createMediaElementSource(audio);
+            const analyzer = this.analyzerAudioContext.createAnalyser();
+            
+            analyzer.fftSize = 256;
+            const bufferLength = analyzer.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            source.connect(analyzer);
+            analyzer.connect(this.analyzerAudioContext.destination);
+
+            // 실시간 오디오 데이터 분석
+            const analyzeAudio = () => {
+                if (this.currentAudio === audio && !audio.paused) {
+                    analyzer.getByteFrequencyData(dataArray);
+                    
+                    // 음성 주파수 대역 (200Hz - 2000Hz) 분석
+                    let sum = 0;
+                    let count = 0;
+                    
+                    // 주요 음성 주파수 범위에 집중
+                    for (let i = 8; i < 80; i++) { // 대략 200Hz-2000Hz 범위
+                        sum += dataArray[i];
+                        count++;
+                    }
+                    
+                    const average = count > 0 ? sum / count : 0;
+                    const normalizedData = dataArray.map(val => val / 255.0);
+                    
+                    // 캐릭터 매니저에 오디오 데이터 전달
+                    window.characterManager.updateLipSyncFromAudio(normalizedData);
+                    
+                    requestAnimationFrame(analyzeAudio);
+                }
+            };
+
+            // 오디오 재생 시작시 분석 시작
+            audio.addEventListener('play', () => {
+                analyzeAudio();
+            });
+
+        } catch (error) {
+            console.error('Failed to setup audio analyzer:', error);
+        }
     }
 }
 

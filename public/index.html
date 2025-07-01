@@ -26,7 +26,7 @@
             padding: 2rem;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
             width: 90%;
-            max-width: 600px;
+            max-width: 800px;
         }
         
         .header {
@@ -176,6 +176,23 @@
             50% { opacity: 0.7; }
             100% { opacity: 1; }
         }
+
+        .character-container {
+            width: 100%;
+            height: 300px;
+            border: 2px solid #f0f0f0;
+            border-radius: 10px;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #characterCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -183,6 +200,10 @@
         <div class="header">
             <h1>🎤 VibeMe</h1>
             <p>AI 음성 챗봇 데모</p>
+        </div>
+        
+        <div class="character-container">
+            <canvas id="characterCanvas"></canvas>
         </div>
         
         <div class="chat-container" id="chatContainer">
@@ -203,6 +224,10 @@
         <div class="status" id="status">연결 중...</div>
     </div>
 
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="character.js"></script>
     <script src="client.js"></script>
 </body>
 </html>
