@@ -10,13 +10,13 @@ class VibeMeWebRTC {
         this.isSpeaking = false;
         this.sessionId = null;
 
-        // 음성 활동 감지 설정
-        this.voiceThreshold = 0.02;
+        // 음성 활동 감지 설정 (인터럽트 방지를 위해 더 엄격하게)
+        this.voiceThreshold = 0.05; // 임계값 증가 (0.02 -> 0.05)
         this.silenceThreshold = 0.005;
         this.voiceDetectionBuffer = [];
-        this.bufferSize = 10; // 최근 10개 청크로 음성 활동 판단
+        this.bufferSize = 15; // 최근 15개 청크로 음성 활동 판단 (더 긴 평가 시간)
         this.consecutiveVoiceFrames = 0; // 연속 음성 프레임 카운터
-        this.minVoiceFrames = 2; // 최소 2프레임 연속 음성이어야 활동으로 인정
+        this.minVoiceFrames = 5; // 최소 5프레임 연속 음성이어야 활동으로 인정 (더 엄격)
 
         this.init();
     }
@@ -283,13 +283,15 @@ class VibeMeWebRTC {
         // 평균 RMS 계산 (추가 검증용)
         const avgRMS = this.voiceDetectionBuffer.reduce((a, b) => a + b, 0) / this.voiceDetectionBuffer.length;
 
-        // 더 엄격한 음성 활동 판단
+        // 훨씬 더 엄격한 음성 활동 판단 (인터럽트 방지)
         // 1. 연속으로 minVoiceFrames 이상 음성이 감지되어야 함
         // 2. 평균 RMS도 임계값 이상이어야 함
+        // 3. 현재 RMS가 높은 임계값을 넘어야 함
         const hasConsistentVoice = this.consecutiveVoiceFrames >= this.minVoiceFrames;
-        const hasStrongSignal = avgRMS > this.voiceThreshold * 0.8; // 평균은 조금 더 관대하게
+        const hasStrongSignal = avgRMS > this.voiceThreshold * 0.9; // 평균 임계값을 더 엄격하게
+        const hasHighCurrentSignal = rms > this.voiceThreshold * 1.2; // 현재값도 높아야 함
 
-        return hasConsistentVoice && hasStrongSignal;
+        return hasConsistentVoice && hasStrongSignal && hasHighCurrentSignal;
     }
 
     // 현재 재생 중인 오디오 중단
