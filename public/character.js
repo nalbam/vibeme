@@ -1,10 +1,23 @@
 class CharacterManager {
     constructor() {
+        this.character = null;
         this.lipSyncMesh = null;
         this.lipSyncMorphs = {};
+        this.eyeBlinkMorphs = {};
         this.isAnimating = false;
         this.currentLipSyncValue = 0;
         this.targetLipSyncValue = 0;
+        this.lipSyncSpeed = 0.15;
+
+        // 자연스러운 움직임을 위한 변수들
+        this.idleTime = 0;
+        this.blinkTime = 0;
+        this.nextBlinkTime = Math.random() * 3 + 2; // 2-5초 후 눈 깜빡임
+        this.headRotation = { x: 0, y: 0, z: 0 };
+        this.targetHeadRotation = { x: 0, y: 0, z: 0 };
+        this.originalPosition = null;
+        this.originalRotation = null;
+
         this.init();
     }
 
@@ -52,12 +65,26 @@ class CharacterManager {
             // 모델을 원점으로 이동
             model.position.copy(center).multiplyScalar(-1);
 
-            // 얼굴 클로즈업을 위한 크기 조정 (더 크게)
+            // 얼굴 클로즈업을 위한 크기 조정 (자연스러운 비율 유지)
             const scale = 2.5 / Math.max(size.x, size.y, size.z);
-            model.scale.setScalar(scale);
+            model.scale.set(scale, scale, scale); // 동일한 비율로 확대
 
-            // 얼굴이 화면 중앙에 오도록 Y축 조정 (아래로)
+            // 얼굴이 화면 중앙에 오도록 Y축 조정 (위로)
             model.position.y -= 0.4;
+
+            this.character = model;
+
+            // 원래 위치와 회전 저장
+            this.originalPosition = {
+                x: model.position.x,
+                y: model.position.y,
+                z: model.position.z
+            };
+            this.originalRotation = {
+                x: model.rotation.x,
+                y: model.rotation.y,
+                z: model.rotation.z
+            };
 
             this.scene.add(model);
             console.log('Character loaded');
@@ -90,6 +117,19 @@ class CharacterManager {
                         }
                     }
 
+                    // 눈 깜빡임용 모프 타겟 찾기
+                    const eyeBlinkTargets = [
+                        'eyeBlinkLeft', 'eyeBlinkRight', 'blink', 'Blink',
+                        'eyeClosed', 'eyesClose', 'EyeClose'
+                    ];
+
+                    for (const target of eyeBlinkTargets) {
+                        if (child.morphTargetDictionary[target] !== undefined) {
+                            this.eyeBlinkMorphs[target] = child.morphTargetDictionary[target];
+                            console.log(`✓ Found eye blink morph: ${target} (index: ${child.morphTargetDictionary[target]})`);
+                        }
+                    }
+
                     // 첫 번째 모프를 기본값으로 사용
                     if (Object.keys(this.lipSyncMorphs).length === 0) {
                         const firstMorph = Object.keys(child.morphTargetDictionary)[0];
@@ -113,6 +153,19 @@ class CharacterManager {
     animate() {
         requestAnimationFrame(() => this.animate());
 
+        const deltaTime = 0.016; // ~60fps
+        this.idleTime += deltaTime;
+        this.blinkTime += deltaTime;
+
+        // 자연스러운 유휴 애니메이션
+        this.updateIdleAnimation();
+
+        // 눈 깜빡임
+        this.updateEyeBlink();
+
+        // 미세한 머리 움직임
+        this.updateHeadMovement();
+
         // 립싱크 애니메이션 업데이트
         if (this.isAnimating) {
             this.updateLipSync();
@@ -121,16 +174,85 @@ class CharacterManager {
         this.renderer.render(this.scene, this.camera);
     }
 
+    updateIdleAnimation() {
+        if (!this.character || !this.originalPosition) return;
+
+        // 매우 미세한 호흡 애니메이션 (원래 위치 기준)
+        const breathIntensity = 0.001;
+        const breathSpeed = 0.6;
+        const breathOffset = Math.sin(this.idleTime * breathSpeed) * breathIntensity;
+
+        // 원래 위치를 기준으로 상대적 움직임 (스케일 변화 제거)
+        this.character.position.y = this.originalPosition.y + breathOffset;
+    }
+
+    updateEyeBlink() {
+        if (!this.lipSyncMesh || Object.keys(this.eyeBlinkMorphs).length === 0) return;
+
+        // 자연스러운 눈 깜빡임
+        if (this.blinkTime >= this.nextBlinkTime) {
+            this.triggerBlink();
+            this.blinkTime = 0;
+            this.nextBlinkTime = Math.random() * 4 + 2; // 2-6초 후 다음 깜빡임
+        }
+    }
+
+    triggerBlink() {
+        if (!this.lipSyncMesh || Object.keys(this.eyeBlinkMorphs).length === 0) return;
+
+        // 빠른 눈 깜빡임 애니메이션
+        for (const morphIndex of Object.values(this.eyeBlinkMorphs)) {
+            if (this.lipSyncMesh.morphTargetInfluences) {
+                // 0.15초 동안 눈 깜빡임
+                this.lipSyncMesh.morphTargetInfluences[morphIndex] = 1;
+                setTimeout(() => {
+                    if (this.lipSyncMesh && this.lipSyncMesh.morphTargetInfluences) {
+                        this.lipSyncMesh.morphTargetInfluences[morphIndex] = 0;
+                    }
+                }, 150);
+            }
+        }
+    }
+
+    updateHeadMovement() {
+        if (!this.character || !this.originalRotation) return;
+
+        // 매우 미세한 머리 움직임
+        const headSpeed = 0.02;
+        const headIntensity = 0.003;
+
+        // 목표 회전값을 드물게 변경
+        if (Math.random() < 0.0005) { // 더 드물게
+            this.targetHeadRotation.x = (Math.random() - 0.5) * headIntensity;
+            this.targetHeadRotation.y = (Math.random() - 0.5) * headIntensity;
+            this.targetHeadRotation.z = (Math.random() - 0.5) * headIntensity * 0.2;
+        }
+
+        // 매우 부드럽게 목표값으로 이동
+        this.headRotation.x += (this.targetHeadRotation.x - this.headRotation.x) * headSpeed;
+        this.headRotation.y += (this.targetHeadRotation.y - this.headRotation.y) * headSpeed;
+        this.headRotation.z += (this.targetHeadRotation.z - this.headRotation.z) * headSpeed;
+
+        // 원래 회전을 기준으로 상대적 회전 적용
+        this.character.rotation.x = this.originalRotation.x + this.headRotation.x;
+        this.character.rotation.y = this.originalRotation.y + this.headRotation.y;
+        this.character.rotation.z = this.originalRotation.z + this.headRotation.z;
+    }
+
     updateLipSync() {
         if (!this.lipSyncMesh || Object.keys(this.lipSyncMorphs).length === 0) return;
 
-        // 부드러운 전환
-        this.currentLipSyncValue += (this.targetLipSyncValue - this.currentLipSyncValue) * 0.1;
+        // 더 부드럽고 반응적인 립싱크
+        this.currentLipSyncValue += (this.targetLipSyncValue - this.currentLipSyncValue) * this.lipSyncSpeed;
+
+        // 더 자연스러운 입 움직임을 위한 랜덤 변화
+        const naturalVariation = (Math.random() - 0.5) * 0.1;
+        const finalLipSyncValue = Math.max(0, Math.min(1, this.currentLipSyncValue + naturalVariation));
 
         // 모프 타겟 적용
         for (const morphIndex of Object.values(this.lipSyncMorphs)) {
             if (this.lipSyncMesh.morphTargetInfluences) {
-                this.lipSyncMesh.morphTargetInfluences[morphIndex] = this.currentLipSyncValue;
+                this.lipSyncMesh.morphTargetInfluences[morphIndex] = finalLipSyncValue;
             }
         }
     }
@@ -138,15 +260,35 @@ class CharacterManager {
     updateLipSyncFromAudio(audioData) {
         if (!this.lipSyncMesh || Object.keys(this.lipSyncMorphs).length === 0) return;
 
-        // 오디오 데이터에서 음성 강도 계산
+        // 더 정교한 오디오 분석
         let sum = 0;
+        let peak = 0;
         for (let i = 0; i < audioData.length; i++) {
-            sum += Math.abs(audioData[i]);
+            const abs = Math.abs(audioData[i]);
+            sum += abs;
+            peak = Math.max(peak, abs);
         }
+
         const average = sum / audioData.length;
 
-        // 립싱크 강도 계산 (0-1 범위)
-        this.targetLipSyncValue = Math.min(1, average * 3);
+        // RMS (Root Mean Square) 계산으로 더 정확한 음성 강도
+        let rms = 0;
+        for (let i = 0; i < audioData.length; i++) {
+            rms += audioData[i] * audioData[i];
+        }
+        rms = Math.sqrt(rms / audioData.length);
+
+        // 평균과 RMS를 조합하여 더 자연스러운 립싱크
+        const intensity = (average * 0.7 + rms * 0.3) * 5;
+
+        // 피크 값으로 급격한 소리 변화 감지
+        const peakBoost = peak > 0.3 ? peak * 0.5 : 0;
+
+        // 최종 립싱크 값 (0-1 범위)
+        this.targetLipSyncValue = Math.min(1, intensity + peakBoost);
+
+        // 립싱크 속도를 음성 강도에 따라 조정
+        this.lipSyncSpeed = 0.1 + (intensity * 0.1);
 
         if (!this.isAnimating) {
             this.isAnimating = true;
