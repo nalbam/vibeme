@@ -4,6 +4,7 @@ class CharacterManager {
         this.lipSyncMesh = null;
         this.lipSyncMorphs = {};
         this.eyeBlinkMorphs = {};
+        this.smileMorphs = {};
         this.isAnimating = false;
         this.currentLipSyncValue = 0;
         this.targetLipSyncValue = 0;
@@ -13,6 +14,9 @@ class CharacterManager {
         this.idleTime = 0;
         this.blinkTime = 0;
         this.nextBlinkTime = Math.random() * 3 + 2; // 2-5초 후 눈 깜빡임
+        this.smileTime = 0;
+        this.nextSmileTime = Math.random() * 10 + 8; // 8-18초 후 미소
+        this.isSmiling = false;
         this.headRotation = { x: 0, y: 0, z: 0 };
         this.targetHeadRotation = { x: 0, y: 0, z: 0 };
         this.originalPosition = null;
@@ -222,6 +226,19 @@ class CharacterManager {
                         }
                     }
 
+                    // 미소용 모프 타겟 찾기
+                    const smileTargets = [
+                        'mouthSmile', 'smile', 'Smile', 'happy', 'Happy',
+                        'mouthHappy', 'grin', 'Grin'
+                    ];
+
+                    for (const target of smileTargets) {
+                        if (child.morphTargetDictionary[target] !== undefined) {
+                            this.smileMorphs[target] = child.morphTargetDictionary[target];
+                            console.log(`✓ Found smile morph: ${target} (index: ${child.morphTargetDictionary[target]})`);
+                        }
+                    }
+
                     // 첫 번째 모프를 기본값으로 사용
                     if (Object.keys(this.lipSyncMorphs).length === 0) {
                         const firstMorph = Object.keys(child.morphTargetDictionary)[0];
@@ -240,6 +257,7 @@ class CharacterManager {
 
         console.log('=== MorphTarget Check Complete ===');
         console.log('Lip sync morphs available:', Object.keys(this.lipSyncMorphs));
+        console.log('Smile morphs available:', Object.keys(this.smileMorphs));
     }
 
     animate() {
@@ -248,12 +266,16 @@ class CharacterManager {
         const deltaTime = 0.016; // ~60fps
         this.idleTime += deltaTime;
         this.blinkTime += deltaTime;
+        this.smileTime += deltaTime;
 
         // 자연스러운 유휴 애니메이션
         this.updateIdleAnimation();
 
         // 눈 깜빡임
         this.updateEyeBlink();
+
+        // 미소 애니메이션
+        this.updateSmile();
 
         // 미세한 머리 움직임
         this.updateHeadMovement();
@@ -307,6 +329,67 @@ class CharacterManager {
                 }, 150);
             }
         }
+    }
+
+    updateSmile() {
+        if (!this.lipSyncMesh || Object.keys(this.smileMorphs).length === 0) return;
+
+        // 자연스러운 미소
+        if (this.smileTime >= this.nextSmileTime && !this.isSmiling) {
+            this.triggerSmile();
+            this.smileTime = 0;
+            this.nextSmileTime = Math.random() * 15 + 10; // 10-25초 후 다음 미소
+        }
+    }
+
+    triggerSmile() {
+        if (!this.lipSyncMesh || Object.keys(this.smileMorphs).length === 0) return;
+
+        this.isSmiling = true;
+        console.log('😊 Character is smiling');
+
+        // 부드럽게 미소 시작
+        for (const morphIndex of Object.values(this.smileMorphs)) {
+            if (this.lipSyncMesh.morphTargetInfluences) {
+                // 0.5초에 걸쳐 미소 생성
+                this.animateSmile(morphIndex, 0, 0.6, 500);
+                
+                // 2초 후 미소 유지하다가 1초에 걸쳐 사라짐
+                setTimeout(() => {
+                    this.animateSmile(morphIndex, 0.6, 0, 1000);
+                    setTimeout(() => {
+                        this.isSmiling = false;
+                    }, 1000);
+                }, 2000);
+            }
+        }
+    }
+
+    animateSmile(morphIndex, startValue, endValue, duration) {
+        if (!this.lipSyncMesh || !this.lipSyncMesh.morphTargetInfluences) return;
+
+        const startTime = Date.now();
+        const animate = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            
+            // Ease-in-out 함수로 부드러운 애니메이션
+            const eased = progress < 0.5 
+                ? 2 * progress * progress 
+                : -1 + (4 - 2 * progress) * progress;
+            
+            const currentValue = startValue + (endValue - startValue) * eased;
+            
+            if (this.lipSyncMesh && this.lipSyncMesh.morphTargetInfluences) {
+                this.lipSyncMesh.morphTargetInfluences[morphIndex] = currentValue;
+            }
+            
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            }
+        };
+        
+        animate();
     }
 
     updateHeadMovement() {
