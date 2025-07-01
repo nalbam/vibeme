@@ -35,13 +35,13 @@ class CharacterManager {
         this.camera.lookAt(0, 0, 0);
 
         // 렌더러
-        this.renderer = new THREE.WebGLRenderer({ 
+        this.renderer = new THREE.WebGLRenderer({
             canvas: canvas,
             antialias: true
         });
         this.renderer.setSize(container.clientWidth, container.clientHeight);
         this.renderer.setPixelRatio(window.devicePixelRatio);
-        
+
         // 그림자 및 톤 매핑 설정
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -231,9 +231,9 @@ class CharacterManager {
     updateIdleAnimation() {
         if (!this.character || !this.originalPosition) return;
 
-        // 매우 미세한 호흡 애니메이션 (원래 위치 기준)
-        const breathIntensity = 0.001;
-        const breathSpeed = 0.6;
+        // 자연스러운 호흡 애니메이션 (원래 위치 기준)
+        const breathIntensity = 0.002;
+        const breathSpeed = 0.8;
         const breathOffset = Math.sin(this.idleTime * breathSpeed) * breathIntensity;
 
         // 원래 위치를 기준으로 상대적 움직임 (스케일 변화 제거)
@@ -271,18 +271,18 @@ class CharacterManager {
     updateHeadMovement() {
         if (!this.character || !this.originalRotation) return;
 
-        // 매우 미세한 머리 움직임
-        const headSpeed = 0.02;
-        const headIntensity = 0.003;
+        // 자연스러운 머리 움직임
+        const headSpeed = 0.025;
+        const headIntensity = 0.005;
 
-        // 목표 회전값을 드물게 변경
-        if (Math.random() < 0.0005) { // 더 드물게
+        // 목표 회전값을 조금 더 자주 변경
+        if (Math.random() < 0.0008) {
             this.targetHeadRotation.x = (Math.random() - 0.5) * headIntensity;
             this.targetHeadRotation.y = (Math.random() - 0.5) * headIntensity;
-            this.targetHeadRotation.z = (Math.random() - 0.5) * headIntensity * 0.2;
+            this.targetHeadRotation.z = (Math.random() - 0.5) * headIntensity * 0.3;
         }
 
-        // 매우 부드럽게 목표값으로 이동
+        // 부드럽게 목표값으로 이동
         this.headRotation.x += (this.targetHeadRotation.x - this.headRotation.x) * headSpeed;
         this.headRotation.y += (this.targetHeadRotation.y - this.headRotation.y) * headSpeed;
         this.headRotation.z += (this.targetHeadRotation.z - this.headRotation.z) * headSpeed;
