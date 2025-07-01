@@ -77,6 +77,11 @@ wss.on('connection', (ws) => {
                         type: 'call-ready',
                         sessionId: sessionId
                     }));
+                    
+                    // AI 첫 인사 메시지 생성 및 전송
+                    setTimeout(async () => {
+                        await sendWelcomeMessage(sessionId);
+                    }, 1000); // 1초 후 인사말
                     break;
 
                 case 'audio-stream':
@@ -414,6 +419,51 @@ async function endTranscribeStream(sessionId) {
         } catch (error) {
             console.error('Error ending transcribe stream:', error);
         }
+    }
+}
+
+// AI 환영 메시지 전송
+async function sendWelcomeMessage(sessionId) {
+    const connection = activeConnections.get(sessionId);
+    if (!connection || !connection.isProcessing) {
+        console.log('Connection not found or not processing, skipping welcome message for session:', sessionId);
+        return;
+    }
+
+    try {
+        // 환영 메시지 생성
+        const welcomeMessages = [
+            '안녕하세요! 저는 VibeMe AI 어시스턴트입니다. 오늘 어떤 도움이 필요하신가요?',
+            '반갑습니다! 실시간 음성 대화가 시작되었습니다. 편하게 말씀해 주세요.',
+            '안녕하세요! 무엇을 도와드릴까요? 궁금한 것이 있으시면 언제든지 말씀해 주세요.',
+            '환영합니다! 오늘 기분은 어떠신가요? 편하게 대화해요.'
+        ];
+        
+        const randomWelcome = welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)];
+        
+        console.log('Sending welcome message:', randomWelcome);
+
+        // 대화 히스토리에 추가
+        connection.conversationHistory.push({
+            role: 'assistant', 
+            content: randomWelcome
+        });
+
+        // TTS 생성 및 전송
+        await generateAndStreamTTS(sessionId, randomWelcome);
+
+        // 대화 로그 전송
+        connection.ws.send(JSON.stringify({
+            type: 'conversation',
+            user: '',
+            assistant: randomWelcome,
+            timestamp: Date.now()
+        }));
+
+        console.log('Welcome message sent successfully for session:', sessionId);
+
+    } catch (error) {
+        console.error('Failed to send welcome message:', error);
     }
 }
 

@@ -301,10 +301,15 @@ class VibeMeWebRTC {
             this.currentAudio.currentTime = 0;
             this.currentAudio = null;
             console.log('🔇 TTS audio stopped');
-            
+
             // 립싱크도 중지
             if (window.characterManager) {
                 window.characterManager.onAIStopSpeaking();
+            }
+
+            // Viseme 립싱크 중지
+            if (window.visemeLips) {
+                window.visemeLips.onAIStopSpeaking();
             }
         }
     }
@@ -329,6 +334,11 @@ class VibeMeWebRTC {
             // 캐릭터 립싱크 시작
             if (window.characterManager) {
                 window.characterManager.onAIStartSpeaking();
+            }
+
+            // Viseme 립싱크 시작
+            if (window.visemeLips) {
+                window.visemeLips.onAIStartSpeaking();
             }
 
             // Base64를 Blob으로 변환
@@ -356,10 +366,15 @@ class VibeMeWebRTC {
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
                 console.log('🎵 AI response playback finished');
-                
+
                 // 캐릭터 립싱크 중지
                 if (window.characterManager) {
                     window.characterManager.onAIStopSpeaking();
+                }
+
+                // Viseme 립싱크 중지
+                if (window.visemeLips) {
+                    window.visemeLips.onAIStopSpeaking();
                 }
             });
 
@@ -367,10 +382,15 @@ class VibeMeWebRTC {
                 console.error('AI response playback error:', error);
                 URL.revokeObjectURL(audioUrl);
                 this.currentAudio = null;
-                
+
                 // 오류 시에도 립싱크 중지
                 if (window.characterManager) {
                     window.characterManager.onAIStopSpeaking();
+                }
+
+                // Viseme 립싱크 중지
+                if (window.visemeLips) {
+                    window.visemeLips.onAIStopSpeaking();
                 }
             });
 
@@ -453,7 +473,7 @@ class VibeMeWebRTC {
 
             const source = this.analyzerAudioContext.createMediaElementSource(audio);
             const analyzer = this.analyzerAudioContext.createAnalyser();
-            
+
             analyzer.fftSize = 512;
             analyzer.smoothingTimeConstant = 0.8;
             const dataArray = new Uint8Array(analyzer.frequencyBinCount);
@@ -465,24 +485,24 @@ class VibeMeWebRTC {
             const analyzeAudio = () => {
                 if (this.currentAudio === audio && !audio.paused && !audio.ended) {
                     analyzer.getByteFrequencyData(dataArray);
-                    
+
                     // 음성 주파수 대역에서 평균 음량 계산
                     let sum = 0;
                     const startFreq = 10; // ~200Hz
                     const endFreq = 100;   // ~2000Hz
-                    
+
                     for (let i = startFreq; i < endFreq; i++) {
                         sum += dataArray[i];
                     }
-                    
+
                     const average = sum / (endFreq - startFreq);
                     const normalizedValue = average / 255.0;
-                    
+
                     // 립싱크 업데이트
                     if (window.characterManager) {
                         window.characterManager.updateLipSyncFromAudio([normalizedValue]);
                     }
-                    
+
                     requestAnimationFrame(analyzeAudio);
                 }
             };
