@@ -121,7 +121,7 @@ class VibeMeWebRTC {
 
             const source = this.audioContext.createMediaStreamSource(this.localStream);
 
-            // ScriptProcessor로 실시간 오디오 캡처 (WebRTC 방식)
+            // WebRTC 방식: ScriptProcessor로 실시간 오디오 캡처
             this.scriptProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
             let audioBuffer = [];
@@ -147,21 +147,11 @@ class VibeMeWebRTC {
                     console.log('🔇 User stopped speaking');
                 }
 
-                // 디버깅: 음성 감지 상태 주기적으로 출력
-                if (Math.random() < 0.01) { // 1% 확률로 출력
-                    console.log('Voice detection debug:', {
-                        voiceActivity,
-                        consecutiveFrames: this.consecutiveVoiceFrames,
-                        threshold: this.voiceThreshold,
-                        isSpeaking: this.isSpeaking
-                    });
-                }
-
                 // 16-bit PCM으로 변환
                 const audioData = this.convertFloat32ToInt16(inputData);
                 audioBuffer.push(...audioData);
 
-                // 250ms마다 전송 (더 빠른 반응성을 위해)
+                // 250ms마다 전송
                 if (now - lastSendTime > 250) {
                     if (audioBuffer.length > 0) {
                         this.sendAudioStream(audioBuffer);
@@ -449,12 +439,12 @@ class VibeMeWebRTC {
         endCallButton.style.display = inCall ? 'inline-block' : 'none';
     }
 
-    // 오디오 분석기 설정 (립싱크용)
+    // 오디오 분석기 설정 (립싱크용) - AnalyserNode 사용
     setupAudioAnalyzer(audio) {
         try {
             if (!window.characterManager) return;
 
-            // 오디오 컨텍스트가 없다면 생성
+            // 오디오 컨텍스트 생성
             if (!this.analyzerAudioContext) {
                 this.analyzerAudioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -462,33 +452,34 @@ class VibeMeWebRTC {
             const source = this.analyzerAudioContext.createMediaElementSource(audio);
             const analyzer = this.analyzerAudioContext.createAnalyser();
             
-            analyzer.fftSize = 256;
-            const bufferLength = analyzer.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
+            analyzer.fftSize = 512;
+            analyzer.smoothingTimeConstant = 0.8;
+            const dataArray = new Uint8Array(analyzer.frequencyBinCount);
 
             source.connect(analyzer);
             analyzer.connect(this.analyzerAudioContext.destination);
 
-            // 실시간 오디오 데이터 분석
+            // 실시간 오디오 분석
             const analyzeAudio = () => {
-                if (this.currentAudio === audio && !audio.paused) {
+                if (this.currentAudio === audio && !audio.paused && !audio.ended) {
                     analyzer.getByteFrequencyData(dataArray);
                     
-                    // 음성 주파수 대역 (200Hz - 2000Hz) 분석
+                    // 음성 주파수 대역에서 평균 음량 계산
                     let sum = 0;
-                    let count = 0;
+                    const startFreq = 10; // ~200Hz
+                    const endFreq = 100;   // ~2000Hz
                     
-                    // 주요 음성 주파수 범위에 집중
-                    for (let i = 8; i < 80; i++) { // 대략 200Hz-2000Hz 범위
+                    for (let i = startFreq; i < endFreq; i++) {
                         sum += dataArray[i];
-                        count++;
                     }
                     
-                    const average = count > 0 ? sum / count : 0;
-                    const normalizedData = dataArray.map(val => val / 255.0);
+                    const average = sum / (endFreq - startFreq);
+                    const normalizedValue = average / 255.0;
                     
-                    // 캐릭터 매니저에 오디오 데이터 전달
-                    window.characterManager.updateLipSyncFromAudio(normalizedData);
+                    // 립싱크 업데이트
+                    if (window.characterManager) {
+                        window.characterManager.updateLipSyncFromAudio([normalizedValue]);
+                    }
                     
                     requestAnimationFrame(analyzeAudio);
                 }
@@ -496,6 +487,9 @@ class VibeMeWebRTC {
 
             // 오디오 재생 시작시 분석 시작
             audio.addEventListener('play', () => {
+                if (this.analyzerAudioContext.state === 'suspended') {
+                    this.analyzerAudioContext.resume();
+                }
                 analyzeAudio();
             });
 
