@@ -35,15 +35,61 @@ class CharacterManager {
         this.camera.lookAt(0, 0, 0);
 
         // 렌더러
-        this.renderer = new THREE.WebGLRenderer({ canvas: canvas });
+        this.renderer = new THREE.WebGLRenderer({ 
+            canvas: canvas,
+            antialias: true
+        });
         this.renderer.setSize(container.clientWidth, container.clientHeight);
+        this.renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // 그림자 및 톤 매핑 설정
+        this.renderer.shadowMap.enabled = true;
+        this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        this.renderer.toneMappingExposure = 1.2;
 
-        // 조명
-        this.scene.add(new THREE.AmbientLight(0xffffff, 1));
+        // 자연스러운 조명 설정
+        this.setupLighting();
 
         // GLB 로드
         this.loadCharacter();
         this.animate();
+    }
+
+    setupLighting() {
+        // 부드러운 환경광 (전체적인 기본 조명)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        this.scene.add(ambientLight);
+
+        // 주요 조명 (얼굴 앞쪽에서 비추는 키 라이트)
+        const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        keyLight.position.set(0, 0.5, 1);
+        keyLight.target.position.set(0, 0, 0);
+        keyLight.castShadow = true;
+        keyLight.shadow.mapSize.width = 1024;
+        keyLight.shadow.mapSize.height = 1024;
+        keyLight.shadow.camera.near = 0.1;
+        keyLight.shadow.camera.far = 5;
+        keyLight.shadow.bias = -0.0001;
+        this.scene.add(keyLight);
+        this.scene.add(keyLight.target);
+
+        // 채움 조명 (그림자를 부드럽게 하는 필 라이트)
+        const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+        fillLight.position.set(-0.5, 0.2, 0.5);
+        this.scene.add(fillLight);
+
+        // 림 라이트 (윤곽을 살리는 백라이트)
+        const rimLight = new THREE.DirectionalLight(0xffffff, 0.4);
+        rimLight.position.set(0, 0.3, -1);
+        this.scene.add(rimLight);
+
+        // 부드러운 포인트 라이트 (얼굴에 생동감)
+        const faceLight = new THREE.PointLight(0xfff5e6, 0.5, 2);
+        faceLight.position.set(0, 0.2, 0.8);
+        this.scene.add(faceLight);
+
+        console.log('Natural lighting setup complete');
     }
 
     loadCharacter() {
@@ -73,6 +119,14 @@ class CharacterManager {
             model.position.y -= 0.4;
 
             this.character = model;
+
+            // 그림자 설정
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
 
             // 원래 위치와 회전 저장
             this.originalPosition = {
