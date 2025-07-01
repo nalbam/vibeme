@@ -18,6 +18,13 @@ class CharacterManager {
         this.originalPosition = null;
         this.originalRotation = null;
 
+        // 마우스 추적 변수들
+        this.mousePosition = { x: 0, y: 0 };
+        this.targetMouseRotation = { x: 0, y: 0 };
+        this.currentMouseRotation = { x: 0, y: 0 };
+        this.mouseTrackingIntensity = 0.3; // 마우스 추적 강도
+        this.mouseTrackingSpeed = 0.05; // 마우스 추적 속도
+
         this.init();
     }
 
@@ -50,6 +57,9 @@ class CharacterManager {
 
         // 자연스러운 조명 설정
         this.setupLighting();
+
+        // 마우스 이벤트 리스너 설정
+        this.setupMouseTracking();
 
         // GLB 로드
         this.loadCharacter();
@@ -90,6 +100,34 @@ class CharacterManager {
         this.scene.add(faceLight);
 
         console.log('Natural lighting setup complete');
+    }
+
+    setupMouseTracking() {
+        const canvas = document.getElementById('characterCanvas');
+        const container = canvas.parentElement;
+
+        canvas.addEventListener('mousemove', (event) => {
+            const rect = canvas.getBoundingClientRect();
+            
+            // 캔버스 내에서의 마우스 위치를 -1 ~ 1 범위로 정규화
+            const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            this.mousePosition.x = x;
+            this.mousePosition.y = y;
+            
+            // 마우스 위치에 따른 목표 회전값 계산
+            this.targetMouseRotation.y = x * this.mouseTrackingIntensity; // 좌우 회전
+            this.targetMouseRotation.x = y * this.mouseTrackingIntensity * 0.5; // 상하 회전 (약간 제한)
+        });
+
+        // 마우스가 캔버스를 벗어나면 중앙으로 돌아가기
+        canvas.addEventListener('mouseleave', () => {
+            this.targetMouseRotation.x = 0;
+            this.targetMouseRotation.y = 0;
+        });
+
+        console.log('Mouse tracking setup complete');
     }
 
     loadCharacter() {
@@ -220,6 +258,9 @@ class CharacterManager {
         // 미세한 머리 움직임
         this.updateHeadMovement();
 
+        // 마우스 추적 업데이트
+        this.updateMouseTracking();
+
         // 립싱크 애니메이션 업데이트
         if (this.isAnimating) {
             this.updateLipSync();
@@ -287,10 +328,19 @@ class CharacterManager {
         this.headRotation.y += (this.targetHeadRotation.y - this.headRotation.y) * headSpeed;
         this.headRotation.z += (this.targetHeadRotation.z - this.headRotation.z) * headSpeed;
 
-        // 원래 회전을 기준으로 상대적 회전 적용
-        this.character.rotation.x = this.originalRotation.x + this.headRotation.x;
-        this.character.rotation.y = this.originalRotation.y + this.headRotation.y;
+        // 원래 회전을 기준으로 상대적 회전 적용 (자연스러운 움직임만)
+        // 마우스 추적은 별도로 처리됨
+        this.character.rotation.x = this.originalRotation.x + this.headRotation.x + this.currentMouseRotation.x;
+        this.character.rotation.y = this.originalRotation.y + this.headRotation.y + this.currentMouseRotation.y;
         this.character.rotation.z = this.originalRotation.z + this.headRotation.z;
+    }
+
+    updateMouseTracking() {
+        if (!this.character) return;
+
+        // 마우스 추적 회전값을 부드럽게 보간
+        this.currentMouseRotation.x += (this.targetMouseRotation.x - this.currentMouseRotation.x) * this.mouseTrackingSpeed;
+        this.currentMouseRotation.y += (this.targetMouseRotation.y - this.currentMouseRotation.y) * this.mouseTrackingSpeed;
     }
 
     updateLipSync() {
