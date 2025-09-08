@@ -1,41 +1,16 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# IDE files
+.idea/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Build output
+out/
 
-# testing
-/coverage
+# Logs
+logs/
 
-# next.js
-/.next/
-/out/
+# Node modules (if applicable for TypeScript project)
+node_modules/
 
-# production
-/build
+# Build artifacts
+dist/
 
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files
-.env*
-!.env.example
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-.env*.local
-
-# audio files
-*.webm
+output/*

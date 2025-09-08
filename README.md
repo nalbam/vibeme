@@ -1,246 +1,189 @@
-# VibeMe - AI 실시간 음성 대화 서비스
+# Amazon Nova Sonic TypeScript Example: Hotel Reservation Cancellation Customer Service
 
-🎤 WebRTC + AWS Transcribe + Polly 기반 실시간 AI 음성 채팅
+This example demonstrates a practical customer service use case for Amazon Nova Sonic model, implementing a hotel reservation cancellation system. The application enables natural conversational interactions through a web interface, allowing customers to cancel their hotel reservations through voice commands while interacting with an AI assistant.
 
-VibeMe는 AWS Transcribe, Polly, OpenAI GPT를 활용한 실시간 AI 음성 대화 서비스입니다. WebRTC와 WebSocket을 통해 음성 인식부터 AI 응답 생성, TTS 재생까지 완전 자동화된 음성 대화 경험을 제공합니다.
+The system showcases how businesses can leverage Amazon Nova Sonic model to create seamless, human-like customer service experiences for handling hotel cancellations, including policy explanations, refund calculations, and confirmation processes.
 
-## 🎯 주요 특징
+## Use Case Overview
 
-- **실시간 음성 인식**: AWS Transcribe 스트리밍으로 즉시 음성을 텍스트로 변환
-- **자연스러운 AI 대화**: OpenAI GPT-3.5-turbo를 통한 지능적인 대화 생성
-- **고품질 음성 합성**: AWS Polly Neural TTS로 자연스러운 한국어 음성 출력
-- **음성 활동 감지**: 사용자 발화 감지 시 TTS 자동 중단으로 자연스러운 대화 흐름
-- **WebRTC 기반**: 실시간 오디오 스트리밍과 최적화된 품질 제어
+This application simulates a hotel reservation cancellation service with the following workflow:
 
-## 🏗️ 시스템 아키텍처
+1. Customer initiates a conversation with the Amazon Nova Sonic
+2. Agent verifies customer identity and reservation details (name, check-in date)
+3. Agent explains applicable cancellation policies and potential refund amounts
+4. Customer confirms cancellation intent
+5. Agent processes the cancellation and provides confirmation details
+6. Agent delivers a summary of the transaction with next steps
 
-```mermaid
-graph LR
-    subgraph "클라이언트"
-        Browser[웹 브라우저<br/>마이크 + 스피커]
-    end
+The system demonstrates how to handle real-world customer service scenarios including:
+- Reservation lookup by customer name and check-in date
+- Dynamic refund calculations based on cancellation policies
+- Clear communication of policy terms
+- Confirmation workflows to prevent accidental cancellations
+- Handling of edge cases like non-existent reservations
 
-    subgraph "서버"
-        Server[Node.js 서버<br/>WebSocket]
-    end
-
-    subgraph "AI 서비스"
-        Transcribe[AWS Transcribe<br/>음성→텍스트]
-        OpenAI[OpenAI GPT<br/>대화 생성]
-        Polly[AWS Polly<br/>텍스트→음성]
-    end
-
-    Browser <==> Server
-    Server --> Transcribe
-    Transcribe --> OpenAI
-    OpenAI --> Polly
-    Polly --> Server
-
-    classDef client fill:#e1f5fe
-    classDef server fill:#f3e5f5
-    classDef ai fill:#fff3e0
-
-    class Browser client
-    class Server server
-    class Transcribe,OpenAI,Polly ai
+## Repository Structure
+```
+.
+├── public/                  # Frontend web application files
+│   ├── index.html          # Main application entry point
+│   └── src/                # Frontend source code
+│       ├── lib/            # Core frontend libraries
+│       │   ├── play/       # Audio playback components
+│       │   └── util/       # Utility functions and managers
+│       ├── main.js         # Main application logic
+│       └── style.css       # Application styling
+├── src/                    # TypeScript source files
+│   ├── client.ts          # AWS Bedrock client implementation
+│   ├── server.ts          # Express server implementation
+│   ├── hotel-confirmation.ts # Hotel reservation cancellation logic
+│   ├── consts.ts          # System prompts and configuration
+│   └── types.ts           # TypeScript type definitions
+└── tsconfig.json          # TypeScript configuration
 ```
 
-## 🚀 빠른 시작
+## Key Features
 
-### 사전 요구사항
+- **Real-time Voice Interaction**: Bidirectional audio streaming for natural conversations
+- **Reservation Verification**: Tool for looking up reservation details by name and date
+- **Dynamic Cancellation Policies**: Different refund calculations based on timing and reservation type
+- **Confirmation Workflow**: Explicit confirmation required before processing cancellations
+- **Refund Calculation**: Automatic calculation of refund amounts based on cancellation policies
+- **Confirmation Codes**: Generation of unique cancellation confirmation codes
+- **Responsive Web Interface**: User-friendly interface with chat history
 
-- Node.js 18.0.0 이상
-- AWS 계정 (Transcribe, Polly 서비스 활성화)
-- OpenAI API 키
+## Usage Instructions
 
-### 설치 및 실행
+### Prerequisites
+- Node.js (v14 or higher)
+- AWS Account with Bedrock access
+- AWS CLI configured with appropriate credentials
+- Modern web browser with WebAudio API support
 
-1. **저장소 클론**
+**Required packages:**
+
+```json
+{
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.785",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.782",
+    "@aws-sdk/credential-providers": "^3.782",
+    "@smithy/node-http-handler": "^4.0.4",
+    "@smithy/types": "^4.1.0",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.9",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.2",
+    "pnpm": "^10.6.1",
+    "rxjs": "^7.8.2",
+    "socket.io": "^4.8.1",
+    "ts-node": "^10.9.2",
+    "uuid": "^11.1.0"
+  }
+}
+```
+
+### Installation
+1. Clone the repository:
 ```bash
-git clone https://github.com/nalbam/vibeme.git
-cd vibeme
+git clone <repository-url>
+cd <repository-name>
 ```
 
-2. **의존성 설치**
+2. Install dependencies:
 ```bash
 npm install
 ```
 
-3. **환경 변수 설정**
+3. Configure AWS credentials:
 ```bash
-# .env 파일 생성
-OPENAI_API_KEY=your_openai_api_key
-AWS_ACCESS_KEY_ID=your_aws_access_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key
-AWS_REGION=ap-northeast-2
-PORT=3000
+# Configure AWS CLI with your credentials
+aws configure --profile bedrock-test
 ```
 
-4. **서비스 실행**
+4. Build the TypeScript code:
 ```bash
-# 개발 모드
-npm run dev
+npm run build
+```
 
-# 프로덕션 모드
+### Quick Start
+1. Start the server:
+```bash
 npm start
 ```
 
-5. **브라우저에서 접속**
+2. Open your browser:
 ```
 http://localhost:3000
 ```
 
-## 🎵 오디오 처리 파이프라인
+3. Grant microphone permissions when prompted.
 
-### 입력 처리 (음성 → 텍스트)
-1. **마이크 캡처**: Web Audio API로 16kHz PCM 오디오 실시간 수집
-2. **음성 활동 감지**: RMS 기반 연속 프레임 분석으로 사용자 발화 감지
-3. **스트리밍 전송**: 250ms 청크로 WebSocket을 통해 서버 전송
-4. **실시간 전사**: AWS Transcribe 스트리밍으로 즉시 텍스트 변환
+### Sample Conversation Flow
 
-### 출력 처리 (텍스트 → 음성)
-1. **AI 응답 생성**: OpenAI GPT-3.5-turbo로 자연스러운 대화 생성
-2. **음성 합성**: AWS Polly Neural TTS로 고품질 한국어 음성 생성
-3. **스트리밍 재생**: Base64 인코딩으로 실시간 오디오 전송 및 재생
-4. **지능적 중단**: 사용자 발화 감지 시 TTS 자동 중단
+Here's an example of how a conversation might flow:
 
-## 📂 프로젝트 구조
+1. **Customer**: "Hi, I need to cancel my hotel reservation."
+2. **Agent**: "Hello! I'm here to help you cancel your hotel reservation. Could you please provide your full name and check-in date?"
+3. **Customer**: "My name is Angela Park and my check-in date is April 12, 2025."
+4. **Agent**: "Thank you, Angela. I've found your reservation at Seaview Hotel for a Deluxe Ocean View room from April 12 to April 15, 2025. According to our policy, you're eligible for a full refund if you cancel by April 5, 2025, or a 50% refund until April 10. Would you like to proceed with cancelling this reservation?"
+5. **Customer**: "Yes, please cancel it."
+6. **Agent**: "I've processed your cancellation. Your confirmation code is CANX-123456. You'll receive a full refund of $750.00 to your original payment method within 5-7 business days. Is there anything else I can help you with?"
 
-```
-vibeme/
-├── server.js              # Express 서버 및 WebSocket 핸들러
-├── public/
-│   ├── index.html         # 메인 웹 인터페이스
-│   └── client.js          # 클라이언트 WebRTC 및 음성 처리
-├── package.json           # 프로젝트 의존성 및 스크립트
-├── setup.sh               # 배포 스크립트
-└── README.md              # 프로젝트 문서
-```
+### Troubleshooting
+1. Microphone Access Issues
+- Problem: Browser shows "Permission denied for microphone"
+- Solution:
+  ```javascript
+  // Check if microphone permissions are granted
+  const permissions = await navigator.permissions.query({ name: 'microphone' });
+  if (permissions.state === 'denied') {
+    console.error('Microphone access is required');
+  }
+  ```
 
-## 🔧 핵심 기술 스택
+2. Audio Playback Issues
+- Problem: No audio output
+- Solution:
+  ```javascript
+  // Verify AudioContext is initialized
+  if (audioContext.state === 'suspended') {
+    await audioContext.resume();
+  }
+  ```
 
-### 백엔드
-- **Express.js**: HTTP 서버 및 정적 파일 서빙
-- **WebSocket (ws)**: 실시간 양방향 통신
-- **AWS SDK**: Transcribe 스트리밍 및 Polly TTS
-- **OpenAI API**: GPT-3.5-turbo 대화 생성
+3. Connection Issues
+- Check server logs for connection status
+- Verify WebSocket connection:
+  ```javascript
+  socket.on('connect_error', (error) => {
+    console.error('Connection failed:', error);
+  });
+  ```
 
-### 프론트엔드
-- **Web Audio API**: 실시간 오디오 캡처 및 처리
-- **WebRTC**: 고품질 마이크 접근 및 음성 스트리밍
-- **WebSocket Client**: 서버와의 실시간 통신
-- **HTML5 Audio**: TTS 오디오 재생
+## Data Flow
+The application processes audio input through a pipeline that converts speech to text, processes it with AWS Bedrock, and returns both text and audio responses.
 
-### AWS 서비스
-- **Transcribe Streaming**: 실시간 음성 인식 (한국어)
-- **Polly Neural**: 고품질 TTS (Seoyeon 음성)
-
-## ⚙️ 핵심 기능 상세
-
-### 음성 활동 감지 (VAD)
-```javascript
-// 고급 음성 활동 감지 알고리즘
-- RMS(Root Mean Square) 에너지 계산
-- 연속 프레임 기반 음성 활동 판단
-- 동적 임계값 조정으로 배경 소음 필터링
-- 최소 2프레임 연속 음성 감지로 잘못된 트리거 방지
-```
-
-### 실시간 스트리밍
-```javascript
-// AWS Transcribe 스트리밍 처리
-- 비동기 제너레이터를 통한 오디오 스트림 생성
-- 실시간 전사 결과 처리 및 부분/완전 결과 구분
-- 연결 상태 모니터링 및 안전한 스트림 종료
+```ascii
+User Speech -> Browser → Server → Client
+     ↑                               ↓
+     │                   Amazon Nova Sonic Model
+     │                               ↓
+Audio Output ← Browser ← Server ← Client
 ```
 
-### 대화 흐름 제어
-```javascript
-// 자연스러운 대화 경험
-- 사용자 발화 감지 시 즉시 TTS 중단
-- 대화 히스토리 관리 (최대 20턴)
-- 실시간 대화 로그 표시
-```
+Key flow components:
+1. User speaks into the microphone through Browser
+2. Audio is streamed through Server to Client
+3. Client sends audio to Amazon Nova Sonic Model with hotel cancellation context
+4. Nova Sonic processes audio, uses reservation tools, and generates response
+5. Response is sent back through client to server to browser
+6. Browser plays audio response to user
 
-## 🎛️ 개발 명령어
+## Infrastructure
+The application runs on a Node.js server with the following key components:
 
-```bash
-# 개발 서버 실행 (nodemon)
-npm run dev
-
-# 프로덕션 서버 실행
-npm start
-
-# 테스트 실행
-npm test
-
-# 의존성 설치
-npm install
-```
-
-## 🌐 환경 설정
-
-### 필수 환경 변수
-```bash
-OPENAI_API_KEY=sk-...           # OpenAI API 키
-AWS_ACCESS_KEY_ID=AKIA...       # AWS 액세스 키
-AWS_SECRET_ACCESS_KEY=...       # AWS 시크릿 키
-AWS_REGION=ap-northeast-2       # AWS 리전 (한국)
-PORT=3000                       # 서버 포트
-```
-
-### AWS 권한 설정
-IAM 사용자에게 다음 서비스 권한 필요:
-- Amazon Transcribe (transcribe:StartStreamTranscription)
-- Amazon Polly (polly:SynthesizeSpeech)
-
-## 🐛 문제 해결
-
-### 일반적인 문제
-
-1. **마이크 접근 권한 오류**
-   - HTTPS 환경에서 실행 필요
-   - 브라우저 마이크 권한 확인
-
-2. **AWS 인증 오류**
-   - 환경 변수 올바른 설정 확인
-   - IAM 권한 검증
-
-3. **WebSocket 연결 실패**
-   - 방화벽/프록시 설정 확인
-   - 포트 접근성 검증
-
-4. **음성 인식 정확도 낮음**
-   - 마이크 품질 및 환경 소음 확인
-   - 발음 명확성 및 말하기 속도 조절
-
-### 성능 최적화
-
-- **음성 감지 임계값 조정**: `client.js`의 `voiceThreshold` 값 튜닝
-- **오디오 청크 크기**: 네트워크 환경에 따라 전송 간격 조정
-- **대화 히스토리 제한**: 메모리 사용량 관리를 위한 히스토리 길이 제한
-
-## 📈 성능 지표
-
-- **음성 인식 지연시간**: ~200-500ms
-- **AI 응답 생성**: ~1-2초
-- **TTS 생성 및 재생**: ~500ms-1초
-- **전체 응답 시간**: ~2-4초
-
-## 🤝 기여하기
-
-1. Fork 프로젝트
-2. Feature 브랜치 생성 (`git checkout -b feature/AmazingFeature`)
-3. 변경사항 커밋 (`git commit -m 'Add some AmazingFeature'`)
-4. 브랜치에 Push (`git push origin feature/AmazingFeature`)
-5. Pull Request 생성
-
-## 📄 라이센스
-
-이 프로젝트는 MIT 라이센스 하에 배포됩니다. 자세한 내용은 `LICENSE` 파일을 참조하세요.
-
-## 🙏 감사의 말
-
-- AWS Transcribe 및 Polly 서비스
-- OpenAI GPT API
-- Web Audio API 및 WebRTC 표준
+- Express.js server handling WebSocket connections
+- Socket.IO for real-time communication
+- Nova S2S client for speech to speech model processing
+- Hotel reservation and cancellation business logic
